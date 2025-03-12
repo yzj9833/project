@@ -7,16 +7,37 @@
  * @flow
  */
 
-import type {ReactNodeList, ReactFormState} from 'shared/ReactTypes';
+import type { ReactNodeList, ReactFormState } from 'shared/ReactTypes';
 import type {
   FiberRoot,
   TransitionTracingCallbacks,
 } from 'react-reconciler/src/ReactInternalTypes';
 
-import {isValidContainer} from 'react-dom-bindings/src/client/ReactDOMContainer';
-import {queueExplicitHydrationTarget} from 'react-dom-bindings/src/events/ReactDOMEventReplaying';
-import {REACT_ELEMENT_TYPE} from 'shared/ReactSymbols';
-import {enableAsyncActions} from 'shared/ReactFeatureFlags';
+import { isValidContainer } from 'react-dom-bindings/src/client/ReactDOMContainer';
+import { queueExplicitHydrationTarget } from 'react-dom-bindings/src/events/ReactDOMEventReplaying';
+import { REACT_ELEMENT_TYPE } from 'shared/ReactSymbols';
+import { enableAsyncActions } from 'shared/ReactFeatureFlags';
+
+import {
+  isContainerMarkedAsRoot,
+  markContainerAsRoot,
+  unmarkContainerAsRoot,
+} from 'react-dom-bindings/src/client/ReactDOMComponentTree';
+import { listenToAllSupportedEvents } from 'react-dom-bindings/src/events/DOMPluginEventSystem';
+import { COMMENT_NODE } from 'react-dom-bindings/src/client/HTMLNodeType';
+
+import {
+  createContainer,
+  createHydrationContainer,
+  updateContainer,
+  updateContainerSync,
+  flushSyncWork,
+  isAlreadyRendering,
+  defaultOnUncaughtError,
+  defaultOnCaughtError,
+  defaultOnRecoverableError,
+} from 'react-reconciler/src/ReactFiberReconciler';
+import { ConcurrentRoot } from 'react-reconciler/src/ReactRootTags';
 
 export type RootType = {
   render(children: ReactNodeList): void,
@@ -30,18 +51,18 @@ export type CreateRootOptions = {
   identifierPrefix?: string,
   onUncaughtError?: (
     error: mixed,
-    errorInfo: {+componentStack?: ?string},
+    errorInfo: {+componentStack ?: ? string},
   ) => void,
-  onCaughtError?: (
+  onCaughtError ?: (
     error: mixed,
     errorInfo: {
-      +componentStack?: ?string,
-      +errorBoundary?: ?React$Component<any, any>,
+      +componentStack ?: ? string,
+  +errorBoundary ?: ? React$Component < any, any >,
     },
   ) => void,
-  onRecoverableError?: (
+  onRecoverableError ?: (
     error: mixed,
-    errorInfo: {+componentStack?: ?string},
+    errorInfo: {+componentStack ?: ? string},
   ) => void,
 };
 
@@ -55,42 +76,21 @@ export type HydrateRootOptions = {
   identifierPrefix?: string,
   onUncaughtError?: (
     error: mixed,
-    errorInfo: {+componentStack?: ?string},
+    errorInfo: {+componentStack ?: ? string},
   ) => void,
-  onCaughtError?: (
+  onCaughtError ?: (
     error: mixed,
     errorInfo: {
-      +componentStack?: ?string,
-      +errorBoundary?: ?React$Component<any, any>,
+      +componentStack ?: ? string,
+  +errorBoundary ?: ? React$Component < any, any >,
     },
   ) => void,
-  onRecoverableError?: (
+  onRecoverableError ?: (
     error: mixed,
-    errorInfo: {+componentStack?: ?string},
+    errorInfo: {+componentStack ?: ? string},
   ) => void,
-  formState?: ReactFormState<any, any> | null,
+  formState ?: ReactFormState < any, any > | null,
 };
-
-import {
-  isContainerMarkedAsRoot,
-  markContainerAsRoot,
-  unmarkContainerAsRoot,
-} from 'react-dom-bindings/src/client/ReactDOMComponentTree';
-import {listenToAllSupportedEvents} from 'react-dom-bindings/src/events/DOMPluginEventSystem';
-import {COMMENT_NODE} from 'react-dom-bindings/src/client/HTMLNodeType';
-
-import {
-  createContainer,
-  createHydrationContainer,
-  updateContainer,
-  updateContainerSync,
-  flushSyncWork,
-  isAlreadyRendering,
-  defaultOnUncaughtError,
-  defaultOnCaughtError,
-  defaultOnRecoverableError,
-} from 'react-reconciler/src/ReactFiberReconciler';
-import {ConcurrentRoot} from 'react-reconciler/src/ReactRootTags';
 
 // $FlowFixMe[missing-this-annot]
 function ReactDOMRoot(internalRoot: FiberRoot) {
@@ -110,17 +110,17 @@ ReactDOMHydrationRoot.prototype.render = ReactDOMRoot.prototype.render =
       if (typeof arguments[1] === 'function') {
         console.error(
           'does not support the second callback argument. ' +
-            'To execute a side effect after rendering, declare it in a component body with useEffect().',
+          'To execute a side effect after rendering, declare it in a component body with useEffect().',
         );
       } else if (isValidContainer(arguments[1])) {
         console.error(
           'You passed a container to the second argument of root.render(...). ' +
-            "You don't need to pass it again since you already passed it to create the root.",
+          "You don't need to pass it again since you already passed it to create the root.",
         );
       } else if (typeof arguments[1] !== 'undefined') {
         console.error(
           'You passed a second argument to root.render(...) but it only accepts ' +
-            'one argument.',
+          'one argument.',
         );
       }
     }
@@ -135,7 +135,7 @@ ReactDOMHydrationRoot.prototype.unmount = ReactDOMRoot.prototype.unmount =
       if (typeof arguments[0] === 'function') {
         console.error(
           'does not support a callback argument. ' +
-            'To execute a side effect after rendering, declare it in a component body with useEffect().',
+          'To execute a side effect after rendering, declare it in a component body with useEffect().',
         );
       }
     }
@@ -147,8 +147,8 @@ ReactDOMHydrationRoot.prototype.unmount = ReactDOMRoot.prototype.unmount =
         if (isAlreadyRendering()) {
           console.error(
             'Attempted to synchronously unmount a root while React was already ' +
-              'rendering. React cannot finish unmounting the root until the ' +
-              'current render has completed, which may lead to a race condition.',
+            'rendering. React cannot finish unmounting the root until the ' +
+            'current render has completed, which may lead to a race condition.',
           );
         }
       }
@@ -165,11 +165,11 @@ export function createRoot(
   if (!isValidContainer(container)) {
     throw new Error('Target container is not a DOM element.');
   }
-
+  //  校验是否重复创建.创建完rootFiber，会给DOM打上标记。缓存对应的rootFiber
   warnIfReactDOMContainerInDEV(container);
 
   const concurrentUpdatesByDefaultOverride = false;
-  let isStrictMode = false;
+  let isStrictMode = false;// 严格模式
   let identifierPrefix = '';
   let onUncaughtError = defaultOnUncaughtError;
   let onCaughtError = defaultOnCaughtError;
@@ -177,27 +177,7 @@ export function createRoot(
   let transitionCallbacks = null;
 
   if (options !== null && options !== undefined) {
-    if (__DEV__) {
-      if ((options: any).hydrate) {
-        console.warn(
-          'hydrate through createRoot is deprecated. Use ReactDOMClient.hydrateRoot(container, <App />) instead.',
-        );
-      } else {
-        if (
-          typeof options === 'object' &&
-          options !== null &&
-          (options: any).$$typeof === REACT_ELEMENT_TYPE
-        ) {
-          console.error(
-            'You passed a JSX element to createRoot. You probably meant to ' +
-              'call root.render instead. ' +
-              'Example usage:\n\n' +
-              '  let root = createRoot(domContainer);\n' +
-              '  root.render(<App />);',
-          );
-        }
-      }
-    }
+    //  判断严格模式的开启
     if (options.unstable_strictMode === true) {
       isStrictMode = true;
     }
@@ -219,23 +199,26 @@ export function createRoot(
   }
 
   const root = createContainer(
-    container,
-    ConcurrentRoot,
+    container,//  传入的root节点html
+    ConcurrentRoot,// 当前的tag
     null,
-    isStrictMode,
-    concurrentUpdatesByDefaultOverride,
-    identifierPrefix,
+    isStrictMode,// 严格模式
+    concurrentUpdatesByDefaultOverride,// 并发模式开关。已废弃
+    identifierPrefix,//  fiberRootNode的标识id。 多应用/服务端渲染/微前端时区分
     onUncaughtError,
     onCaughtError,
     onRecoverableError,
     transitionCallbacks,
   );
+    //  标记rootFiber
   markContainerAsRoot(root.current, container);
 
+  //  处理特殊情况。COMMENT_NODE时用父节点。Suspense组件水合情况
   const rootContainerElement: Document | Element | DocumentFragment =
     container.nodeType === COMMENT_NODE
       ? (container.parentNode: any)
       : container;
+  //  注册react的监听函数到根组件中。也就是容器上。react17之前是document   
   listenToAllSupportedEvents(rootContainerElement);
 
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
@@ -269,7 +252,7 @@ export function hydrateRoot(
     if (initialChildren === undefined) {
       console.error(
         'Must provide initial children as second argument to hydrateRoot. ' +
-          'Example usage: hydrateRoot(domContainer, <App />)',
+        'Example usage: hydrateRoot(domContainer, <App />)',
       );
     }
   }
@@ -341,13 +324,13 @@ function warnIfReactDOMContainerInDEV(container: any) {
       if (container._reactRootContainer) {
         console.error(
           'You are calling ReactDOMClient.createRoot() on a container that was previously ' +
-            'passed to ReactDOM.render(). This is not supported.',
+          'passed to ReactDOM.render(). This is not supported.',
         );
       } else {
         console.error(
           'You are calling ReactDOMClient.createRoot() on a container that ' +
-            'has already been passed to createRoot() before. Instead, call ' +
-            'root.render() on the existing root instead if you want to update it.',
+          'has already been passed to createRoot() before. Instead, call ' +
+          'root.render() on the existing root instead if you want to update it.',
         );
       }
     }

@@ -97,12 +97,15 @@ export function ensureRootIsScheduled(root: FiberRoot): void {
   //
   // Most of the actual scheduling logic does not happen until
   // `scheduleTaskForRootDuringMicrotask` runs.
-
+  //  节点调度都会执行
+  //  1、确保一个待处理的微任务处理调度
+  //  2.在scheduleTaskForRootDuringMicrotask之前，大部分都不会调用
   // Add the root to the schedule
   if (root === lastScheduledRoot || root.next !== null) {
     // Fast path. This root is already scheduled.
   } else {
     if (lastScheduledRoot === null) {
+      //  当前调度跟上一次调度都是root
       firstScheduledRoot = lastScheduledRoot = root;
     } else {
       lastScheduledRoot.next = root;
@@ -129,12 +132,13 @@ export function ensureRootIsScheduled(root: FiberRoot): void {
       scheduleImmediateTask(processRootScheduleInMicrotask);
     }
   }
-
+  //  不启用延迟到微任务的特性。直接调度
   if (!enableDeferRootSchedulingToMicrotask) {
     // While this flag is disabled, we schedule the render task immediately
     // instead of waiting a microtask.
     // TODO: We need to land enableDeferRootSchedulingToMicrotask ASAP to
     // unblock additional features we have planned.
+    debugger
     scheduleTaskForRootDuringMicrotask(root, now());
   }
 
@@ -186,7 +190,6 @@ function flushSyncWorkAcrossRoots_impl(
   do {
     didPerformSomeWork = false; // 重置标志，开始一轮工作。
     let root = firstScheduledRoot; // 从调度队列中的第一个 root 开始处理。
-
     while (root !== null) {
       // 如果只处理 legacy 模式并且该 root 不是 legacy 模式的，跳过该 root。
       if (onlyLegacy && (disableLegacyMode || root.tag !== LegacyRoot)) {
@@ -302,6 +305,7 @@ function scheduleTaskForRootDuringMicrotask(
   root: FiberRoot,
   currentTime: number
 ): Lane {
+  console.log('进入scheduleTaskForRootDuringMicrotask')
   // This function is always called inside a microtask, or at the very end of a
   // rendering task right before we yield to the main thread. It should never be
   // called synchronously.
@@ -397,6 +401,7 @@ function scheduleTaskForRootDuringMicrotask(
         schedulerPriorityLevel = NormalSchedulerPriority;
         break;
     }
+    console.log('test123:异步调用',schedulerPriorityLevel)
 
     const newCallbackNode = scheduleCallback(
       schedulerPriorityLevel,
@@ -415,43 +420,41 @@ function performWorkOnRootViaSchedulerTask(
   root: FiberRoot,
   didTimeout: boolean
 ): RenderTaskFn | null {
-  // This is the entry point for concurrent tasks scheduled via Scheduler (and
-  // postTask, in the future).
+  // 这是通过Scheduler（以及未来的postTask）调度并发任务的入口点。
 
-  if (enableProfilerTimer && enableProfilerNestedUpdatePhase) {
-    resetNestedUpdateFlag();
-  }
+  // 在决定使用哪条线之前刷掉所有的被动效果，以防他们安排了额外的工作。
 
-  // Flush any pending passive effects before deciding which lanes to work on,
-  // in case they schedule additional work.
+  // 缓存node，保证后续中断的恢复。同时是高优先级任务的判断
   const originalCallbackNode = root.callbackNode;
+  //  开始渲染前，执行可能存在的useEffect。有可能触发一些新的更新导致任务root的优先级变更了。
+  //  确保数据准确
   const didFlushPassiveEffects = flushPassiveEffects();
   if (didFlushPassiveEffects) {
-    // Something in the passive effect phase may have canceled the current task.
-    // Check if the task node for this root was changed.
+    // 触发了任务
     if (root.callbackNode !== originalCallbackNode) {
-      // The current task was canceled. Exit. We don't need to call
-      // `ensureRootIsScheduled` because the check above implies either that
-      // there's a new task, or that there's no remaining work on this root.
+      // 不需要执行ensureRootIsScheduled。
+      // 此时存在新的高优先级任务或者任务结束。没必要调用ensureRootIsScheduled
       return null;
     } else {
       // Current task was not canceled. Continue.
     }
   }
 
-  // Determine the next lanes to work on, using the fields stored on the root.
-  // TODO: We already called getNextLanes when we scheduled the callback; we
-  // should be able to avoid calling it again by stashing the result on the
-  // root object. However, because we always schedule the callback during
-  // a microtask (scheduleTaskForRootDuringMicrotask), it's possible that
-  // an update was scheduled earlier during this same browser task (and
-  // therefore before the microtasks have run). That's because Scheduler batches
-  // together multiple callbacks into a single browser macrotask, without
-  // yielding to microtasks in between. We should probably change this to align
-  // with the postTask behavior (and literally use postTask when
-  // it's available).
-  const workInProgressRoot = getWorkInProgressRoot();
-  const workInProgressRootRenderLanes = getWorkInProgressRootRenderLanes();
+  // TODO: [调度优化] 避免重复计算 lanes 并与 postTask 对齐
+  // - 现状: 因在微任务中调度回调(scheduleTaskForRootDuringMicrotask)，可能造成：
+  //   * 同一浏览器任务中的早期更新未处理
+  //   * 导致 getNextLanes 重复计算
+  // - 短期方案: 将 getNextLanes 结果暂存至 root 对象
+  // - 长期方案: 改用 postTask API（当可用时）以解决：
+  //   * Scheduler 批量回调导致的微任务介入延迟
+  //   * 浏览器任务队列与 React 调度器的时序对齐
+
+  //   确定接下来要处理的 lanes（优先级通道），使用 root 节点上存储的字段
+
+
+  const workInProgressRoot = getWorkInProgressRoot();// 获取当前正在渲染的根节
+  const workInProgressRootRenderLanes = getWorkInProgressRootRenderLanes();// 当前渲染所使用的优先级通道lanes
+  //  计算接下来需要处理的任务通道
   const lanes = getNextLanes(
     root,
     root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes
@@ -461,11 +464,9 @@ function performWorkOnRootViaSchedulerTask(
     return null;
   }
 
-  // Enter the work loop.
-  // TODO: We only check `didTimeout` defensively, to account for a Scheduler
-  // bug we're still investigating. Once the bug in Scheduler is fixed,
-  // we can remove this, since we track expiration ourselves.
+  //  一个防御性的校验。仍存在未知bug导致Scheduler超时，强制同步
   const forceSync = !disableSchedulerTimeoutInWorkLoop && didTimeout;
+  // Enter the work loop.
   performWorkOnRoot(root, lanes, forceSync);
 
   // The work loop yielded, but there may or may not be work left at the current
@@ -475,6 +476,7 @@ function performWorkOnRootViaSchedulerTask(
   // versus a new task is the same, we cheat a bit and call it here. This is
   // only safe to do because we know we're at the end of the browser task.
   // So although it's not an actual microtask, it might as well be.
+  console.log('又执行scheduleTaskForRootDuringMicrotask')
   scheduleTaskForRootDuringMicrotask(root, now());
   if (root.callbackNode === originalCallbackNode) {
     // The task node scheduled for this root is the same one that's
@@ -520,6 +522,7 @@ function scheduleCallback(
     ReactSharedInternals.actQueue.push(callback);
     return fakeActCallbackNode;
   } else {
+    // console.log('test123:异步调用',priorityLevel,callback)
     return Scheduler_scheduleCallback(priorityLevel, callback);
   }
 }
@@ -550,10 +553,9 @@ function scheduleImmediateTask(cb: () => mixed) {
   // Alternatively, can we move this check to the host config?
   if (supportsMicrotasks) {
     scheduleMicrotask(() => {
-      // In Safari, appending an iframe forces microtasks to run.
-      // https://github.com/facebook/react/issues/22459
-      // We don't support running callbacks in the middle of render
-      // or commit so we need to check against that.
+      // 在Safari中，添加iframe会强制微任务运行。
+      // https://github.com/facebook/react/issues/22459我们不支持在渲染或提交过程中运行回调，
+      // 因此我们需要对此进行检查。
       const executionContext = getExecutionContext();
       if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
         // Note that this would still prematurely flush the callbacks

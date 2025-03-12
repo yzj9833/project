@@ -9,12 +9,12 @@ const Count = () => {
     });
   };
 
-  useEffect(() => {
-    console.log("effect...start", count);
-    return () => {
-      console.log("effect...end", count);
-    };
-  }, [count]);
+  // useEffect(() => {
+  //   console.log("effect...start", count);
+  //   return () => {
+  //     console.log("effect...end", count);
+  //   };
+  // }, [count]);
 
   // setCount((e) => e + 1);
 

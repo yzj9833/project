@@ -1,0 +1,10 @@
+{
+  "javascript.validate.enable": false,
+  "typescript.validate.enable": false,
+  "js/ts.implicitProjectConfig.checkJs": false,
+  "flow.enabled": true,
+  "flow.useNPMPackagedFlow": true,
+  "eslint.enable": false,
+  "editor.formatOnSave": false,
+  "javascript.format.enable": false
+}

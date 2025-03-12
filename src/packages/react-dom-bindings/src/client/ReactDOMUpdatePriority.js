@@ -34,6 +34,7 @@ export function getCurrentUpdatePriority(): EventPriority {
 
 export function resolveUpdatePriority(): EventPriority {
   const updatePriority = ReactDOMSharedInternals.p; /* currentUpdatePriority */
+  console.log('updatePriority',updatePriority)
   if (updatePriority !== NoEventPriority) {
     return updatePriority;
   }

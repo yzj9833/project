@@ -622,6 +622,7 @@ export function includesBlockingLane(lanes: Lanes): boolean {
     InputContinuousLane |
     DefaultHydrationLane |
     DefaultLane;
+    // console.log('test123:lanes',lanes)
   return (lanes & SyncDefaultLanes) !== NoLanes;
 }
 

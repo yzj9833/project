@@ -544,6 +544,7 @@ export function createHostRootFiber(
     // Without some nodes in the tree having empty base times.
     mode |= ProfileMode;
   }
+  //  mode代表react的工作模式。
 
   return createFiber(HostRoot, null, null, mode);
 }

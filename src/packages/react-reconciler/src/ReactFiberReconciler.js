@@ -334,13 +334,13 @@ export function createHydrationContainer(
 }
 
 export function updateContainer(
-  element: ReactNodeList,
-  container: OpaqueRoot,
-  parentComponent: ?React$Component<any, any>,
-  callback: ?Function,
+  element: ReactNodeList,// 需要渲染的React元素.转译为jsx了
+  container: OpaqueRoot,//  容器的根节点。FiberRootNode
+  parentComponent: ?React$Component<any, any>,//  父组件
+  callback: ?Function,//  回调函数
 ): Lane {
-  const current = container.current;
-  const lane = requestUpdateLane(current);
+  const current = container.current;//  当前的rootFiber节点
+  const lane = requestUpdateLane(current);//  获取优先级
   updateContainerImpl(
     current,
     lane,
@@ -431,9 +431,10 @@ function updateContainerImpl(
     }
     update.callback = callback;
   }
-
+  //  为了查找根节点，FiberRootNode
   const root = enqueueUpdate(rootFiber, update, lane);
   if (root !== null) {
+    //  开发环境的性能追踪
     startUpdateTimerByLane(lane);
     scheduleUpdateOnFiber(root, rootFiber, lane);
     entangleTransitions(root, rootFiber, lane);

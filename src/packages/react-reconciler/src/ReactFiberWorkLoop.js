@@ -675,7 +675,6 @@ export function requestUpdateLane(fiber: Fiber): Lane {
         // fresh transition lane.
         requestTransitionLane(transition);
   }
-
   return eventPriorityToLane(resolveUpdatePriority());
 }
 
@@ -741,18 +740,6 @@ export function scheduleUpdateOnFiber(
   fiber: Fiber,
   lane: Lane
 ) {
-  if (__DEV__) {
-    if (isRunningInsertionEffect) {
-      console.error("useInsertionEffect must not schedule updates.");
-    }
-  }
-
-  if (__DEV__) {
-    if (isFlushingPassiveEffects) {
-      didScheduleUpdateDuringPassiveEffects = true;
-    }
-  }
-
   // Check if the work loop is currently suspended and waiting for data to
   // finish loading.
   if (
@@ -762,8 +749,11 @@ export function scheduleUpdateOnFiber(
     // Suspended commit phase
     root.cancelPendingCommit !== null
   ) {
+    //  commit阶段暂停，等待异步操作
+    //  use、suspense抛出了promise时。主要是suspense
     // The incoming update might unblock the current render. Interrupt the
     // current attempt and restart from the top.
+    //  暂停更新
     prepareFreshStack(root, NoLanes);
     markRootSuspended(
       root,
@@ -901,6 +891,7 @@ export function performWorkOnRoot(
     !includesBlockingLane(lanes) && // 当前通道中没有阻塞通道
     !includesExpiredLane(root, lanes); // 当前通道中没有过期通道
   // 根据是否启用时间切片选择渲染方式
+  console.log('test123：当前渲染:',shouldTimeSlice?'renderRootConcurrent':"renderRootSync")
   let exitStatus = shouldTimeSlice
     ? renderRootConcurrent(root, lanes) // 异步渲染
     : renderRootSync(root, lanes); // 同步渲染
@@ -978,7 +969,6 @@ export function performWorkOnRoot(
       break; // 退出循环
     } while (true);
   }
-
   // 确保根节点的调度是最新的
   ensureRootIsScheduled(root);
 }
@@ -2013,6 +2003,7 @@ export function renderHasNotSuspendedYet(): boolean {
 // and more similar. Not sure it makes sense to maintain forked paths. Consider
 // unifying them again.
 function renderRootSync(root: FiberRoot, lanes: Lanes) {
+  debugger
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
   const prevDispatcher = pushDispatcher(root.containerInfo);
@@ -2148,6 +2139,7 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
 // The work loop is an extremely hot path. Tell Closure not to inline it.
 /** @noinline */
 function workLoopSync() {
+  console.log('执行同步workLoopSync')
   // Perform work without checking if we need to yield between fiber.
   while (workInProgress !== null) {
     performUnitOfWork(workInProgress);

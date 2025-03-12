@@ -172,6 +172,7 @@ export function createFiberRoot(
   formState: ReactFormState<any, any> | null,
 ): FiberRoot {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
+  //  new一个FiberRootNode节点
   const root: FiberRoot = (new FiberRootNode(
     containerInfo,
     tag,
@@ -192,6 +193,7 @@ export function createFiberRoot(
 
   // Cyclic construction. This cheats the type system right now because
   // stateNode is any.
+  //  uninitializedFiber：尚未初始化内容的 Fiber。不包含任何组件
   const uninitializedFiber = createHostRootFiber(tag, isStrictMode);
   root.current = uninitializedFiber;
   uninitializedFiber.stateNode = root;
@@ -214,6 +216,7 @@ export function createFiberRoot(
       isDehydrated: hydrate,
       cache: initialCache,
     };
+    //  初始化rootFiber的缓存。为后续更新做准备
     uninitializedFiber.memoizedState = initialState;
   } else {
     const initialState: RootState = {
@@ -223,7 +226,7 @@ export function createFiberRoot(
     };
     uninitializedFiber.memoizedState = initialState;
   }
-
+  // 初始化rootFiber的UpdateQueue
   initializeUpdateQueue(uninitializedFiber);
 
   return root;

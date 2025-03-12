@@ -250,6 +250,7 @@ function getRootForUpdatedFiber(sourceFiber: Fiber): FiberRoot | null {
   // current behavior we've used for several release cycles. Consider not
   // performing this check if the updated fiber already unmounted, since it's
   // not possible for that to cause an infinite update loop.
+  //  无限循环报错
   throwIfInfiniteUpdateLoopDetected();
 
   // When a setState happens, we must ensure the root is scheduled. Because
@@ -267,6 +268,7 @@ function getRootForUpdatedFiber(sourceFiber: Fiber): FiberRoot | null {
     node = parent;
     parent = node.return;
   }
+  //  循环找到FiberRootNode应用根节点。包含调度和更新所需
   return node.tag === HostRoot ? (node.stateNode: FiberRoot) : null;
 }
 

@@ -186,6 +186,8 @@ function flushWork(initialTime: number) {
 }
 
 function workLoop(initialTime: number) {
+  console.log('执行异步workLoop')
+
   let currentTime = initialTime;
   advanceTimers(currentTime);
   currentTask = peek(taskQueue);

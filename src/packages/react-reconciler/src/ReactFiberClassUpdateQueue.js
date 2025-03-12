@@ -177,15 +177,15 @@ if (__DEV__) {
 
 export function initializeUpdateQueue<State>(fiber: Fiber): void {
   const queue: UpdateQueue<State> = {
-    baseState: fiber.memoizedState,
-    firstBaseUpdate: null,
-    lastBaseUpdate: null,
+    baseState: fiber.memoizedState,// 上一次的缓存数据
+    firstBaseUpdate: null,//  上一次遗留的更新链表头
+    lastBaseUpdate: null,// 上一次遗留的更新链表尾
     shared: {
-      pending: null,
-      lanes: NoLanes,
+      pending: null,// 新的待处理更新循环链表。一个循环链表。指向第一个。使用时取pending.next，并断开pending.next避免循环
+      lanes: NoLanes,// 本次更新的优先级
       hiddenCallbacks: null,
     },
-    callbacks: null,
+    callbacks: null,//  状态更新完成后需要执行的回调函数。类组件生命周期的回调、suspense组件被隐藏的回调、组件可见时的回调
   };
   fiber.updateQueue = queue;
 }
@@ -253,6 +253,7 @@ export function enqueueUpdate<State>(
   }
 
   if (isUnsafeClassRenderPhaseUpdate(fiber)) {
+    //  类组件调用，直接进行同步渲染。判断是否为同步渲染
     // This is an unsafe render phase update. Add directly to the update
     // queue so we can process it immediately during the current render.
     const pending = sharedQueue.pending;
