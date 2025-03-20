@@ -384,11 +384,9 @@ function updateContainerImpl(
   if (__DEV__) {
     onScheduleRoot(container, element);
   }
-
   if (enableSchedulingProfiler) {
     markRenderScheduled(lane);
   }
-
   const context = getContextForSubtree(parentComponent);
   if (container.context === null) {
     container.context = context;

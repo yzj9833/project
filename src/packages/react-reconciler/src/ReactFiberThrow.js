@@ -367,12 +367,12 @@ function throwException(
   root: FiberRoot,
   returnFiber: Fiber | null,
   sourceFiber: Fiber,
-  value: mixed,
+  value: mixed,// 错误信息
   rootRenderLanes: Lanes,
 ): boolean {
-  // The source fiber did not complete.
+  // 标题未完成
   sourceFiber.flags |= Incomplete;
-
+  //  开发工具的处理
   if (enableUpdaterTracking) {
     if (isDevToolsPresent) {
       // If we have pending work still, restore the original updaters
@@ -382,65 +382,28 @@ function throwException(
 
   if (value !== null && typeof value === 'object') {
     if (enablePostpone && value.$$typeof === REACT_POSTPONE_TYPE) {
-      // Act as if this is an infinitely suspending promise.
+      // 伪装成promise。React.postpone的兼容。永不解析的"Promise"
+      //Postpone 是一种新的机制，允许组件"推迟"渲染，与 Suspense 类似但有不同用途。
       value = {then: function () {}};
     }
-    if (typeof value.then === 'function') {
+    if (typeof value.then === 'function') {// 
       // This is a wakeable. The component suspended.
       const wakeable: Wakeable = (value: any);
       resetSuspendedComponent(sourceFiber, rootRenderLanes);
 
-      if (__DEV__) {
-        if (
-          getIsHydrating() &&
-          (disableLegacyMode || sourceFiber.mode & ConcurrentMode)
-        ) {
-          markDidThrowWhileHydratingDEV();
-        }
-      }
-
-      if (__DEV__) {
-        if (enableDebugTracing) {
-          if (sourceFiber.mode & DebugTracingMode) {
-            const name = getComponentNameFromFiber(sourceFiber) || 'Unknown';
-            logComponentSuspended(name, wakeable);
-          }
-        }
-      }
-
-      // Mark the nearest Suspense boundary to switch to rendering a fallback.
+      // 获取最近的 Suspense 边界
       const suspenseBoundary = getSuspenseHandler();
       if (suspenseBoundary !== null) {
         switch (suspenseBoundary.tag) {
           case SuspenseComponent: {
-            // If this suspense boundary is not already showing a fallback, mark
-            // the in-progress render as suspended. We try to perform this logic
-            // as soon as soon as possible during the render phase, so the work
-            // loop can know things like whether it's OK to switch to other tasks,
-            // or whether it can wait for data to resolve before continuing.
-            // TODO: Most of these checks are already performed when entering a
-            // Suspense boundary. We should track the information on the stack so
-            // we don't have to recompute it on demand. This would also allow us
-            // to unify with `use` which needs to perform this logic even sooner,
-            // before `throwException` is called.
             if (disableLegacyMode || sourceFiber.mode & ConcurrentMode) {
-              if (getShellBoundary() === null) {
-                // Suspended in the "shell" of the app. This is an undesirable
-                // loading state. We should avoid committing this tree.
-                renderDidSuspendDelayIfPossible();
+              //  并发模式下，判断shell
+              //  shell：渲染碰到的第一个suspense
+              //  也就是判断找到的suspenseBoundary是否是第一个碰到的suspense
+              //  如果是第一个碰到的，需要延迟渲染fallback
+              if (getShellBoundary() === null) {// 没有定义shell，或者发生在shell中
+                renderDidSuspendDelayIfPossible();//  延迟处理。如果超时了才显示fallback
               } else {
-                // If we suspended deeper than the shell, we don't need to delay
-                // the commmit. However, we still call renderDidSuspend if this is
-                // a new boundary, to tell the work loop that a new fallback has
-                // appeared during this render.
-                // TODO: Theoretically we should be able to delete this branch.
-                // It's currently used for two things: 1) to throttle the
-                // appearance of successive loading states, and 2) in
-                // SuspenseList, to determine whether the children include any
-                // pending fallbacks. For 1, we should apply throttling to all
-                // retries, not just ones that render an additional fallback. For
-                // 2, we should check subtreeFlags instead. Then we can delete
-                // this branch.
                 const current = suspenseBoundary.alternate;
                 if (current === null) {
                   renderDidSuspend();
@@ -448,50 +411,31 @@ function throwException(
               }
             }
 
-            suspenseBoundary.flags &= ~ForceClientRender;
+            suspenseBoundary.flags &= ~ForceClientRender;// 清楚强制客户端渲染的标识，因为现在将使用正常的Suspense处理流程
+            //标记Suspense边界需要捕获挂起的组件，并准备显示fallback内容
             markSuspenseBoundaryShouldCapture(
-              suspenseBoundary,
+              suspenseBoundary,//捕获挂起的Suspense组件
               returnFiber,
               sourceFiber,
               root,
               rootRenderLanes,
             );
-            // Retry listener
-            //
-            // If the fallback does commit, we need to attach a different type of
-            // listener. This one schedules an update on the Suspense boundary to
-            // turn the fallback state off.
-            //
-            // Stash the wakeable on the boundary fiber so we can access it in the
-            // commit phase.
-            //
-            // When the wakeable resolves, we'll attempt to render the boundary
-            // again ("retry").
-
-            // Check if this is a Suspensey resource. We do not attach retry
-            // listeners to these, because we don't actually need them for
-            // rendering. Only for committing. Instead, if a fallback commits
-            // and the only thing that suspended was a Suspensey resource, we
-            // retry immediately.
-            // TODO: Refactor throwException so that we don't have to do this type
-            // check. The caller already knows what the cause was.
-            const isSuspenseyResource =
-              wakeable === noopSuspenseyCommitThenable;
+            //  检查是否为特殊的Suspensey资源
+            const isSuspenseyResource = wakeable === noopSuspenseyCommitThenable;
             if (isSuspenseyResource) {
+              //如果是Suspensey资源，标记Suspense边界需要立即重试
               suspenseBoundary.flags |= ScheduleRetry;
             } else {
-              const retryQueue: RetryQueue | null =
-                (suspenseBoundary.updateQueue: any);
+              const retryQueue: RetryQueue | null = (suspenseBoundary.updateQueue: any);
+              //处理普通Promise的情况（设置重试队列）
               if (retryQueue === null) {
                 suspenseBoundary.updateQueue = new Set([wakeable]);
               } else {
                 retryQueue.add(wakeable);
               }
-
-              // We only attach ping listeners in concurrent mode. Legacy
-              // Suspense always commits fallbacks synchronously, so there are
-              // no pings.
+              //  添加Ping监听器（仅在并发模式）
               if (disableLegacyMode || suspenseBoundary.mode & ConcurrentMode) {
+                //  当Promise解析时，回调会通知React调度器。
                 attachPingListener(root, wakeable, rootRenderLanes);
               }
             }

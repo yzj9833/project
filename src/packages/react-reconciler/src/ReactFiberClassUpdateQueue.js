@@ -389,7 +389,7 @@ function getStateFromUpdate<State>(
   workInProgress: Fiber,
   queue: UpdateQueue<State>,
   update: Update<State>,
-  prevState: State,
+  prevState: State,// newState
   nextProps: any,
   instance: any,
 ): any {
@@ -397,30 +397,12 @@ function getStateFromUpdate<State>(
     case ReplaceState: {
       const payload = update.payload;
       if (typeof payload === 'function') {
-        // Updater function
-        if (__DEV__) {
-          enterDisallowedContextReadInDEV();
-        }
         const nextState = payload.call(instance, prevState, nextProps);
-        if (__DEV__) {
-          if (
-            debugRenderPhaseSideEffectsForStrictMode &&
-            workInProgress.mode & StrictLegacyMode
-          ) {
-            setIsStrictModeForDevtools(true);
-            try {
-              payload.call(instance, prevState, nextProps);
-            } finally {
-              setIsStrictModeForDevtools(false);
-            }
-          }
-          exitDisallowedContextReadInDEV();
-        }
         return nextState;
       }
-      // State object
       return payload;
     }
+    //  错误边界，捕获到错误边界，开始重新处理时，此时代表已经重新处理了
     case CaptureUpdate: {
       workInProgress.flags =
         (workInProgress.flags & ~ShouldCapture) | DidCapture;
@@ -430,27 +412,8 @@ function getStateFromUpdate<State>(
       const payload = update.payload;
       let partialState;
       if (typeof payload === 'function') {
-        // Updater function
-        if (__DEV__) {
-          enterDisallowedContextReadInDEV();
-        }
         partialState = payload.call(instance, prevState, nextProps);
-        if (__DEV__) {
-          if (
-            debugRenderPhaseSideEffectsForStrictMode &&
-            workInProgress.mode & StrictLegacyMode
-          ) {
-            setIsStrictModeForDevtools(true);
-            try {
-              payload.call(instance, prevState, nextProps);
-            } finally {
-              setIsStrictModeForDevtools(false);
-            }
-          }
-          exitDisallowedContextReadInDEV();
-        }
       } else {
-        // Partial state object
         partialState = payload;
       }
       if (partialState === null || partialState === undefined) {
@@ -491,10 +454,10 @@ export function suspendIfUpdateReadFromEntangledAsyncAction() {
     }
   }
 }
-
+//  处理组件的状态更新
 export function processUpdateQueue<State>(
-  workInProgress: Fiber,
-  props: any,
+  workInProgress: Fiber,//  组件进行中的渲染树
+  props: any,// 
   instance: any,
   renderLanes: Lanes,
 ): void {
@@ -514,14 +477,15 @@ export function processUpdateQueue<State>(
 
   // Check if there are pending updates. If so, transfer them to the base queue.
   let pendingQueue = queue.shared.pending;
+  //  存在更新任务.1、提取pendingQueue，接入到BaseQueue中，同时同步到current的updateQueue上
   if (pendingQueue !== null) {
     queue.shared.pending = null;
 
-    // The pending queue is circular. Disconnect the pointer between first
-    // and last so that it's non-circular.
+    //  断开环形任务队列
     const lastPendingUpdate = pendingQueue;
     const firstPendingUpdate = lastPendingUpdate.next;
     lastPendingUpdate.next = null;
+
     // Append pending updates to base queue
     if (lastBaseUpdate === null) {
       firstBaseUpdate = firstPendingUpdate;
@@ -530,11 +494,7 @@ export function processUpdateQueue<State>(
     }
     lastBaseUpdate = lastPendingUpdate;
 
-    // If there's a current queue, and it's different from the base queue, then
-    // we need to transfer the updates to that queue, too. Because the base
-    // queue is a singly-linked list with no cycles, we can append to both
-    // lists and take advantage of structural sharing.
-    // TODO: Pass `current` as argument
+    //  
     const current = workInProgress.alternate;
     if (current !== null) {
       // This is always non-null on a ClassComponent or HostRoot
@@ -551,44 +511,36 @@ export function processUpdateQueue<State>(
     }
   }
 
-  // These values may change as we process the queue.
+  //  到此为止，已经实现了将待处理的更新任务从pendingQueue转移到baseQueue，并确保当前树和工作树的更新队列保持同步
   if (firstBaseUpdate !== null) {
-    // Iterate through the list of updates to compute the result.
-    let newState = queue.baseState;
-    // TODO: Don't need to accumulate this. Instead, we can remove renderLanes
-    // from the original lanes.
+    let newState = queue.baseState;//  获取更新任务的基础状态。
+
     let newLanes: Lanes = NoLanes;
 
-    let newBaseState = null;
+    let newBaseState = null;//  先占位，后续进行重新计算
     let newFirstBaseUpdate = null;
     let newLastBaseUpdate: null | Update<State> = null;
 
-    let update: Update<State> = firstBaseUpdate;
+    let update: Update<State> = firstBaseUpdate;//  拿到第一个更新任务
     do {
-      // An extra OffscreenLane bit is added to updates that were made to
-      // a hidden tree, so that we can distinguish them from updates that were
-      // already there when the tree was hidden.
+      // 判断当前更新任务是否包含了离屏的更新任务
       const updateLane = removeLanes(update.lane, OffscreenLane);
       const isHiddenUpdate = updateLane !== update.lane;
 
-      // Check if this update was made while the tree was hidden. If so, then
-      // it's not a "base" update and we should disregard the extra base lanes
-      // that were added to renderLanes when we entered the Offscreen tree.
+      // 判断是否应该跳过这个更新
+      //  离屏更新：检查是否是当前渲染优先级的子集
+      //  普通更新：检查是否是传入渲染优先级的子集
       const shouldSkipUpdate = isHiddenUpdate
-        ? !isSubsetOfLanes(getWorkInProgressRootRenderLanes(), updateLane)
-        : !isSubsetOfLanes(renderLanes, updateLane);
+        ? !isSubsetOfLanes(getWorkInProgressRootRenderLanes(), updateLane)//  离屏更新在root的renderlanes中依旧更新
+        : !isSubsetOfLanes(renderLanes, updateLane);//  普通更新在经过getEntangledLanes获取到的纠缠更新lanes中。
 
       if (shouldSkipUpdate) {
-        // Priority is insufficient. Skip this update. If this is the first
-        // skipped update, the previous update/state is the new base
-        // update/state.
+        // 如果跳过更新。前一个更新/状态是新的基本更新/状态。存到新的下一个baseUpdate中newLastBaseUpdate
         const clone: Update<State> = {
           lane: updateLane,
-
           tag: update.tag,
           payload: update.payload,
           callback: update.callback,
-
           next: null,
         };
         if (newLastBaseUpdate === null) {
@@ -600,35 +552,25 @@ export function processUpdateQueue<State>(
         // Update the remaining priority in the queue.
         newLanes = mergeLanes(newLanes, updateLane);
       } else {
-        // This update does have sufficient priority.
-
-        // Check if this update is part of a pending async action. If so,
-        // we'll need to suspend until the action has finished, so that it's
-        // batched together with future updates in the same action.
+        //  不跳过。需要处理完该操作
+        // 检查是否是纠缠的异步操作的一部分
         if (updateLane !== NoLane && updateLane === peekEntangledActionLane()) {
           didReadFromEntangledAsyncAction = true;
         }
-
+        // 存在基础更新
         if (newLastBaseUpdate !== null) {
           const clone: Update<State> = {
-            // This update is going to be committed so we never want uncommit
-            // it. Using NoLane works because 0 is a subset of all bitmasks, so
-            // this will never be skipped by the check above.
-            lane: NoLane,
-
+            lane: NoLane,// NoLane是所有位掩码的字级，所以永远不跳过
             tag: update.tag,
             payload: update.payload,
-
-            // When this update is rebased, we should not fire its
-            // callback again.
-            callback: null,
+            callback: null,// 清空回调，避免多次执行
 
             next: null,
           };
           newLastBaseUpdate = newLastBaseUpdate.next = clone;
         }
 
-        // Process this update.
+       // 根据更新类型计算新状态。包含错误边界的处理
         newState = getStateFromUpdate(
           workInProgress,
           queue,
@@ -637,12 +579,14 @@ export function processUpdateQueue<State>(
           props,
           instance,
         );
+        //  处理更新回调
         const callback = update.callback;
         if (callback !== null) {
           workInProgress.flags |= Callback;
           if (isHiddenUpdate) {
             workInProgress.flags |= Visibility;
           }
+          //维护回调队列。把update.callback插入到workInProgress.updateQueue中。提取所有的update任务到一处
           const callbacks = queue.callbacks;
           if (callbacks === null) {
             queue.callbacks = [callback];
@@ -651,18 +595,17 @@ export function processUpdateQueue<State>(
           }
         }
       }
-      // $FlowFixMe[incompatible-type] we bail out when we get a null
+      // 9. 移动到下一个更新
       update = update.next;
       if (update === null) {
         pendingQueue = queue.shared.pending;
         if (pendingQueue === null) {
+          //  退出循环
           break;
         } else {
-          // An update was scheduled from inside a reducer. Add the new
-          // pending updates to the end of the list and keep processing.
+          // 内部reducer插入了一个新的更新任务。执行getStateFromUpdate时，更新数据，可能存在新的state变化
           const lastPendingUpdate = pendingQueue;
-          // Intentionally unsound. Pending updates form a circular list, but we
-          // unravel them when transferring them to the base queue.
+          //  重新解开环形队列
           const firstPendingUpdate =
             ((lastPendingUpdate.next: any): Update<State>);
           lastPendingUpdate.next = null;
@@ -673,14 +616,20 @@ export function processUpdateQueue<State>(
       }
     } while (true);
 
+    //  没有跳过的更新，直接使用计算出来的newState
     if (newLastBaseUpdate === null) {
       newBaseState = newState;
     }
-
+    //</State>
+    // 1、newLastBaseUpdate为null的时候，newBaseState=newState都是最终结果
+    // 2、newLastBaseUpdate不为null。newBaseStat为最后一次跳过时的newState。
+    //    此时newState为没有跳过的更新结果，后续将这个值作为起始值，进行newLastBaseUpdate的任务处理，得到的就最终结果
+    //  react的状态一致性
     queue.baseState = ((newBaseState: any): State);
     queue.firstBaseUpdate = newFirstBaseUpdate;
     queue.lastBaseUpdate = newLastBaseUpdate;
 
+    // 更新queue的lanes基础状态。
     if (firstBaseUpdate === null) {
       // `queue.lanes` is used for entangling transitions. We can set it back to
       // zero once the queue is empty.
@@ -694,8 +643,12 @@ export function processUpdateQueue<State>(
     // dealt with the props. Context in components that specify
     // shouldComponentUpdate is tricky; but we'll have to account for
     // that regardless.
+
+    // newLanes 包含了所有跳过的更新的 lanes
     markSkippedUpdateLanes(newLanes);
+    // 更新 workInProgress 的 lanes
     workInProgress.lanes = newLanes;
+    // 保存最终的状态
     workInProgress.memoizedState = newState;
   }
 

@@ -53,22 +53,20 @@ export type LazyComponent<T, P> = {
 function lazyInitializer<T>(payload: Payload<T>): T {
   if (payload._status === Uninitialized) {
     const ctor = payload._result;
-    const thenable = ctor();
+    const thenable = ctor();//  调用函数，获取结果。解析完毕结构moduleObject = { default: MyComponent, ... };
     // Transition to the next state.
     // This might throw either because it's missing or throws. If so, we treat it
     // as still uninitialized and try again next time. Which is the same as what
     // happens if the ctor or any wrappers processing the ctor throws. This might
     // end up fixing it if the resolution was a concurrency bug.
+    //  
     thenable.then(
       moduleObject => {
-        if (
-          (payload: Payload<T>)._status === Pending ||
-          payload._status === Uninitialized
-        ) {
+        if (  (payload: Payload<T>)._status === Pending || payload._status === Uninitialized ) {
           // Transition to the next state.
           const resolved: ResolvedPayload<T> = (payload: any);
-          resolved._status = Resolved;
-          resolved._result = moduleObject;
+          resolved._status = Resolved;// 
+          resolved._result = moduleObject;// 将payload._result存储为实际结果。
         }
       },
       error => {
@@ -88,7 +86,7 @@ function lazyInitializer<T>(payload: Payload<T>): T {
       // to resolve. Set it as pending in the meantime.
       const pending: PendingPayload = (payload: any);
       pending._status = Pending;
-      pending._result = thenable;
+      pending._result = thenable;// 将payload._result存储为promise对象
     }
   }
   if (payload._status === Resolved) {
@@ -120,7 +118,7 @@ function lazyInitializer<T>(payload: Payload<T>): T {
         );
       }
     }
-    return moduleObject.default;
+    return moduleObject.default;// 返回实际结果
   } else {
     throw payload._result;
   }

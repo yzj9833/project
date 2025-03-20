@@ -100,9 +100,7 @@ export function pushPrimaryTreeSuspenseHandler(handler: Fiber): void {
 }
 
 export function pushFallbackTreeSuspenseHandler(fiber: Fiber): void {
-  // We're about to render the fallback. If something in the fallback suspends,
-  // it's akin to throwing inside of a `catch` block. This boundary should not
-  // capture. Reuse the existing handler on the stack.
+  //  渲染备用方案fallback，需要处理fallback也处于挂起的情况
   reuseSuspenseHandlerOnStack(fiber);
 }
 

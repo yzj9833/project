@@ -91,13 +91,7 @@ let isFlushingWork: boolean = false;
 let currentEventTransitionLane: Lane = NoLane;
 
 export function ensureRootIsScheduled(root: FiberRoot): void {
-  // This function is called whenever a root receives an update. It does two
-  // things 1) it ensures the root is in the root schedule, and 2) it ensures
-  // there's a pending microtask to process the root schedule.
-  //
-  // Most of the actual scheduling logic does not happen until
-  // `scheduleTaskForRootDuringMicrotask` runs.
-  //  节点调度都会执行
+  //  任何节点调度都会执行
   //  1、确保一个待处理的微任务处理调度
   //  2.在scheduleTaskForRootDuringMicrotask之前，大部分都不会调用
   // Add the root to the schedule
@@ -132,13 +126,12 @@ export function ensureRootIsScheduled(root: FiberRoot): void {
       scheduleImmediateTask(processRootScheduleInMicrotask);
     }
   }
-  //  不启用延迟到微任务的特性。直接调度
+  //  不启用延迟到微任务的特性。直接调度。目前一直为true
   if (!enableDeferRootSchedulingToMicrotask) {
     // While this flag is disabled, we schedule the render task immediately
     // instead of waiting a microtask.
     // TODO: We need to land enableDeferRootSchedulingToMicrotask ASAP to
     // unblock additional features we have planned.
-    debugger
     scheduleTaskForRootDuringMicrotask(root, now());
   }
 
@@ -230,19 +223,14 @@ function flushSyncWorkAcrossRoots_impl(
 
   isFlushingWork = false; // 处理完成后，重置标记。
 }
-
+//  在微任务中处理根节点的调度
 function processRootScheduleInMicrotask() {
   // 此函数总是在微任务中调用，不能同步调用。
-  didScheduleMicrotask = false; // 表示当前不再计划微任务。
-  if (__DEV__) {
-    // 如果处于开发模式下，额外记录是否计划了微任务（仅在 act 测试中使用）。
-    didScheduleMicrotask_act = false;
-  }
+  didScheduleMicrotask = false; // 关闭微任务的调度锁
+  mightHavePendingSyncWork = false;// 初始化可能存在同步工作的标识
 
-  // 我们将重新计算是否有可能存在同步工作。
-  mightHavePendingSyncWork = false;
-
-  let syncTransitionLanes = NoLanes; // 代表没有需要同步渲染的 Transition 工作。
+  /**  过渡任务紧急处理区start   **/  
+  let syncTransitionLanes = NoLanes; // 重置 Transition 任务的优先级。
   if (currentEventTransitionLane !== NoLane) {
     // 检查当前事件中是否有正在进行的 Transition（异步更新）。
     if (shouldAttemptEagerTransition()) {
@@ -252,21 +240,20 @@ function processRootScheduleInMicrotask() {
     }
     currentEventTransitionLane = NoLane; // 处理完后，清空当前的 Transition。
   }
+  /**  过渡任务紧急处理区end   **/  
 
   const currentTime = now(); // 获取当前时间，用于调度任务。
-
   let prev = null; // 记录链表中的前一个 root。
   let root = firstScheduledRoot; // 从链表的第一个 root 开始迭代调度。
+  //  while循环多根节点，并处理
   while (root !== null) {
-    // 遍历所有调度中的 root 节点。
-    const next = root.next; // 保存下一个 root 的引用，以便继续遍历。
+    const next = root.next; // 提前保存下一个root的引用，防止修改链表导致丢失
+    //  提取当前root下的待处理任务通道集合
     const nextLanes = scheduleTaskForRootDuringMicrotask(root, currentTime);
     // 计算当前 root 在本次微任务中的需要处理的工作（Lanes）。
 
     if (nextLanes === NoLane) {
-      // 如果 root 没有更多的待处理工作，说明可以将其从调度队列中移除。
-
-      // 清除 root 的 next 指针，表示它已从调度链表中移除。
+      // 该root没有待处理的任务了。进入下一个root循环
       root.next = null;
       if (prev === null) {
         // 如果 prev 为 null，说明当前 root 是第一个节点，将链表头更新为下一个 root。
@@ -284,8 +271,7 @@ function processRootScheduleInMicrotask() {
       prev = root;
 
       // 这是一个快速路径优化，目的是尽早退出 `flushSyncWorkOnAllRoots`。
-      // 如果我们确定没有剩余的同步工作可以执行时，就可以退出。
-      // 如果 syncTransitionLanes 已被设置，跳过此优化。
+      // 判断紧急transition任务或者同步任务
       if (
         syncTransitionLanes !== NoLanes || // 如果有同步 Transition 工作，就标记同步工作存在。
         includesSyncLane(nextLanes) // 否则，检查是否有同步的 lanes。
@@ -301,26 +287,13 @@ function processRootScheduleInMicrotask() {
   flushSyncWorkAcrossRoots_impl(syncTransitionLanes, false);
 }
 
-function scheduleTaskForRootDuringMicrotask(
-  root: FiberRoot,
-  currentTime: number
-): Lane {
-  console.log('进入scheduleTaskForRootDuringMicrotask')
-  // This function is always called inside a microtask, or at the very end of a
-  // rendering task right before we yield to the main thread. It should never be
-  // called synchronously.
-  //
-  // TODO: Unless enableDeferRootSchedulingToMicrotask is off. We need to land
-  // that ASAP to unblock additional features we have planned.
-  //
-  // This function also never performs React work synchronously; it should
-  // only schedule work to be performed later, in a separate task or microtask.
+function scheduleTaskForRootDuringMicrotask(root: FiberRoot,currentTime: number): Lane {
+  // 调用场景：微任务内部调用，或者渲染最后。不会同步执行React的任务中
 
-  // Check if any lanes are being starved by other work. If so, mark them as
-  // expired so we know to work on those next.
+  //  标记过期任务，解决饥饿问题
   markStarvedLanesAsExpired(root, currentTime);
 
-  // Determine the next lanes to work on, and their priority.
+  // 确认下一个要处理的优先级通道
   const workInProgressRoot = getWorkInProgressRoot();
   const workInProgressRootRenderLanes = getWorkInProgressRootRenderLanes();
   const nextLanes = getNextLanes(
@@ -330,17 +303,12 @@ function scheduleTaskForRootDuringMicrotask(
 
   const existingCallbackNode = root.callbackNode;
   if (
-    // Check if there's nothing to work on
-    nextLanes === NoLanes ||
-    // If this root is currently suspended and waiting for data to resolve, don't
-    // schedule a task to render it. We'll either wait for a ping, or wait to
-    // receive an update.
-    //
-    // Suspended render phase
-    (root === workInProgressRoot && isWorkLoopSuspendedOnData()) ||
-    // Suspended commit phase
-    root.cancelPendingCommit !== null
+    nextLanes === NoLanes ||//  没有任务
+    (root === workInProgressRoot && isWorkLoopSuspendedOnData()) ||// 当前root处于suspense刮起阶段
+    root.cancelPendingCommit !== null// 提交阶段报错/高优先级打断等
   ) {
+    //  
+    //  取消调度
     // Fast path: There's nothing to work on.
     if (existingCallbackNode !== null) {
       cancelCallback(existingCallbackNode);
@@ -350,7 +318,7 @@ function scheduleTaskForRootDuringMicrotask(
     return NoLane;
   }
 
-  // Schedule a new callback in the host environment.
+  // 处理同步任务
   if (includesSyncLane(nextLanes)) {
     // Synchronous work is always flushed at the end of the microtask, so we
     // don't need to schedule an additional task.
@@ -361,28 +329,25 @@ function scheduleTaskForRootDuringMicrotask(
     root.callbackNode = null;
     return SyncLane;
   } else {
-    // We use the highest priority lane to represent the priority of the callback.
+    // 异步任务，获取任务通道中最高优先级
     const existingCallbackPriority = root.callbackPriority;
     const newCallbackPriority = getHighestPriorityLane(nextLanes);
-
+    // 判断已存在调度任务情况下，是否取消任务
     if (
       newCallbackPriority === existingCallbackPriority &&
-      // Special case related to `act`. If the currently scheduled task is a
-      // Scheduler task, rather than an `act` task, cancel it and re-schedule
-      // on the `act` queue.
       !(
         __DEV__ &&
         ReactSharedInternals.actQueue !== null &&
         existingCallbackNode !== fakeActCallbackNode
       )
     ) {
-      // The priority hasn't changed. We can reuse the existing task.
+      // 相同优先级，复用现有的任务
       return newCallbackPriority;
     } else {
-      // Cancel the existing callback. We'll schedule a new one below.
+      //  取消旧任务调度
       cancelCallback(existingCallbackNode);
     }
-
+    // 转换优先级
     let schedulerPriorityLevel;
     switch (lanesToEventPriority(nextLanes)) {
       case DiscreteEventPriority:
@@ -401,8 +366,7 @@ function scheduleTaskForRootDuringMicrotask(
         schedulerPriorityLevel = NormalSchedulerPriority;
         break;
     }
-    console.log('test123:异步调用',schedulerPriorityLevel)
-
+    //  调度任务
     const newCallbackNode = scheduleCallback(
       schedulerPriorityLevel,
       performWorkOnRootViaSchedulerTask.bind(null, root)
@@ -416,42 +380,40 @@ function scheduleTaskForRootDuringMicrotask(
 
 type RenderTaskFn = (didTimeout: boolean) => RenderTaskFn | null;
 
-function performWorkOnRootViaSchedulerTask(
+function performWorkOnRootViaSchedulerTask(// 这是通过Scheduler（以及未来的postTask）调度并发任务的入口点。
   root: FiberRoot,
   didTimeout: boolean
 ): RenderTaskFn | null {
-  // 这是通过Scheduler（以及未来的postTask）调度并发任务的入口点。
 
-  // 在决定使用哪条线之前刷掉所有的被动效果，以防他们安排了额外的工作。
-
-  // 缓存node，保证后续中断的恢复。同时是高优先级任务的判断
-  const originalCallbackNode = root.callbackNode;
-  //  开始渲染前，执行可能存在的useEffect。有可能触发一些新的更新导致任务root的优先级变更了。
-  //  确保数据准确
+   // 在决定使用哪条线之前刷掉所有的被动效果，以防他们安排了额外的工作
+  const originalCallbackNode = root.callbackNode;// 起始的node。留存FiberRootNode
+  //  开始渲染前，执行可能存在的useEffect。有可能触发一些新的更新导致任务root的优先级变更了。确保数据准确
   const didFlushPassiveEffects = flushPassiveEffects();
+
+  // 如果被动效果触发了新的更新，可能导致当前任务被取消
   if (didFlushPassiveEffects) {
-    // 触发了任务
-    if (root.callbackNode !== originalCallbackNode) {
+    if (root.callbackNode !== originalCallbackNode) {// 触发了任务
       // 不需要执行ensureRootIsScheduled。
-      // 此时存在新的高优先级任务或者任务结束。没必要调用ensureRootIsScheduled
+      // 高优先级任务会替换root.callbackNode。没必要调用ensureRootIsScheduled
       return null;
     } else {
-      // Current task was not canceled. Continue.
+      // 当前任务未被取消，继续执行。说明优先级一致
     }
   }
 
-  // TODO: [调度优化] 避免重复计算 lanes 并与 postTask 对齐
-  // - 现状: 因在微任务中调度回调(scheduleTaskForRootDuringMicrotask)，可能造成：
-  //   * 同一浏览器任务中的早期更新未处理
-  //   * 导致 getNextLanes 重复计算
-  // - 短期方案: 将 getNextLanes 结果暂存至 root 对象
-  // - 长期方案: 改用 postTask API（当可用时）以解决：
-  //   * Scheduler 批量回调导致的微任务介入延迟
-  //   * 浏览器任务队列与 React 调度器的时序对齐
+  /*
+    TODO: [调度优化] 避免重复计算 lanes 并与 postTask 对齐
+    - 现状: 因在微任务中调度回调(scheduleTaskForRootDuringMicrotask)，可能造成：
+      * 同一浏览器任务中的早期更新未处理
+      * 导致 getNextLanes 重复计算
+    - 短期方案: 将 getNextLanes 结果暂存至 root 对象
+    - 长期方案: 改用 postTask API（当可用时）以解决：
+      * Scheduler 批量回调导致的微任务介入延迟
+      * 浏览器任务队列与 React 调度器的时序对齐
+  */
 
-  //   确定接下来要处理的 lanes（优先级通道），使用 root 节点上存储的字段
 
-
+  //   获取当前正在处理的根节点及其渲染通道。跟scheduleTaskForRootDuringMicrotask的一致，优化见注释
   const workInProgressRoot = getWorkInProgressRoot();// 获取当前正在渲染的根节
   const workInProgressRootRenderLanes = getWorkInProgressRootRenderLanes();// 当前渲染所使用的优先级通道lanes
   //  计算接下来需要处理的任务通道
@@ -460,27 +422,23 @@ function performWorkOnRootViaSchedulerTask(
     root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes
   );
   if (lanes === NoLanes) {
-    // No more work on this root.
     return null;
   }
 
   //  一个防御性的校验。仍存在未知bug导致Scheduler超时，强制同步
   const forceSync = !disableSchedulerTimeoutInWorkLoop && didTimeout;
-  // Enter the work loop.
+ 
+   // 进入工作循环，执行实际渲染工作
   performWorkOnRoot(root, lanes, forceSync);
 
-  // The work loop yielded, but there may or may not be work left at the current
-  // priority. Need to determine whether we need to schedule a continuation.
-  // Usually `scheduleTaskForRootDuringMicrotask` only runs inside a microtask;
-  // however, since most of the logic for determining if we need a continuation
-  // versus a new task is the same, we cheat a bit and call it here. This is
-  // only safe to do because we know we're at the end of the browser task.
-  // So although it's not an actual microtask, it might as well be.
-  console.log('又执行scheduleTaskForRootDuringMicrotask')
+  // 重新评估任务状态并调度：
+  // 1. 处理未完成的遗留工作（时间切片中断）
+  // 2. 响应渲染期间产生的新更新
+  // 3. 可能取消当前任务或调度新优先级任务
   scheduleTaskForRootDuringMicrotask(root, now());
+
   if (root.callbackNode === originalCallbackNode) {
-    // The task node scheduled for this root is the same one that's
-    // currently executed. Need to return a continuation.
+   // 
     return performWorkOnRootViaSchedulerTask.bind(null, root);
   }
   return null;

@@ -263,7 +263,7 @@ function unwrapThenable<T>(thenable: Thenable<T>): T {
   if (thenableState === null) {
     thenableState = createThenableState();
   }
-  return trackUsedThenable(thenableState, thenable, index);
+  return trackUsedThenable(thenableState, thenable, index);// 追踪thenable的状态
 }
 
 function coerceRef(
@@ -274,6 +274,7 @@ function coerceRef(
 ): void {
   let ref;
   if (enableRefAsProp) {
+    //  启用ref作为props时。
     // TODO: This is a temporary, intermediate step. When enableRefAsProp is on,
     // we should resolve the `ref` prop during the begin phase of the component
     // it's attached to (HostComponent, ClassComponent, etc).
@@ -1642,98 +1643,76 @@ function createChildReconciler(
   }
 
   function reconcileSingleElement(
-    returnFiber: Fiber,
-    currentFirstChild: Fiber | null,
-    element: ReactElement,
+    returnFiber: Fiber,// 父节点
+    currentFirstChild: Fiber | null,//  current第一个子节点
+    element: ReactElement,//  当前要渲染的jsx内容
     lanes: Lanes,
   ): Fiber {
-    const key = element.key;
+    const key = element.key;// 
     let child = currentFirstChild;
+    //  遍历current对应的所有节点，找到可以复用的。第一次循环
     while (child !== null) {
-      // TODO: If key === null and child.key === null, then this only applies to
-      // the first item in the list.
+      // TODO: If key === null and child.key === null, then this only applies to the first item in the list.
       if (child.key === key) {
         const elementType = element.type;
-        if (elementType === REACT_FRAGMENT_TYPE) {
-          if (child.tag === Fragment) {
-            deleteRemainingChildren(returnFiber, child.sibling);
-            const existing = useFiber(child, element.props.children);
-            existing.return = returnFiber;
-            if (__DEV__) {
-              existing._debugOwner = element._owner;
-              existing._debugInfo = currentDebugInfo;
-            }
+        if (elementType === REACT_FRAGMENT_TYPE) {// 处理Fragment情况
+          if (child.tag === Fragment) {// 现有节点也是Fragment
+            deleteRemainingChildren(returnFiber, child.sibling);// 删除所有兄弟节点，因为已经匹配上了
+            const existing = useFiber(child, element.props.children);// 复用当前节点。
+            existing.return = returnFiber;// 绑定父节点
             validateFragmentProps(element, existing, returnFiber);
             return existing;
           }
         } else {
+          //  非Fragment情况
           if (
-            child.elementType === elementType ||
-            // Keep this check inline so it only runs on the false path:
-            (__DEV__
-              ? isCompatibleFamilyForHotReloading(child, element)
-              : false) ||
-            // Lazy types should reconcile their resolved type.
-            // We need to do this after the Hot Reloading check above,
-            // because hot reloading has different semantics than prod because
-            // it doesn't resuspend. So we can't let the call below suspend.
-            (typeof elementType === 'object' &&
+            child.elementType === elementType ||  //  类型相同
+            (typeof elementType === 'object' && //  lazy内容类型相同
               elementType !== null &&
               elementType.$$typeof === REACT_LAZY_TYPE &&
               resolveLazy(elementType) === child.type)
           ) {
-            deleteRemainingChildren(returnFiber, child.sibling);
-            const existing = useFiber(child, element.props);
-            coerceRef(returnFiber, child, existing, element);
-            existing.return = returnFiber;
-            if (__DEV__) {
-              existing._debugOwner = element._owner;
-              existing._debugInfo = currentDebugInfo;
-            }
+            //  此时key相同、type相同。
+            deleteRemainingChildren(returnFiber, child.sibling);//  删除兄弟节点
+            const existing = useFiber(child, element.props);//  复用
+            coerceRef(returnFiber, child, existing, element);// 处理Ref。留存ref的引用工作树上，以便commit阶段使用
+            existing.return = returnFiber;//  设置父节点引用
             return existing;
           }
         }
-        // Didn't match.
+        // key相同，type不同。因为key唯一，直接删除所有
         deleteRemainingChildren(returnFiber, child);
         break;
       } else {
+        //  key不同，将节点放入returnFiber的deletions数组中
         deleteChild(returnFiber, child);
       }
       child = child.sibling;
     }
-
+    //  循环结束后，没找到节点
     if (element.type === REACT_FRAGMENT_TYPE) {
+      //  创建新的Fragment节点
       const created = createFiberFromFragment(
-        element.props.children,
+        element.props.children, 
         returnFiber.mode,
         lanes,
         element.key,
       );
       created.return = returnFiber;
-      if (__DEV__) {
-        // We treat the parent as the owner for stack purposes.
-        created._debugOwner = returnFiber;
-        if (enableOwnerStacks) {
-          created._debugTask = returnFiber._debugTask;
-        }
-        created._debugInfo = currentDebugInfo;
-      }
       validateFragmentProps(element, created, returnFiber);
       return created;
     } else {
+      //  创建对应的节点
       const created = createFiberFromElement(element, returnFiber.mode, lanes);
-      coerceRef(returnFiber, currentFirstChild, created, element);
+      coerceRef(returnFiber, currentFirstChild, created, element);// 留存ref的引用工作树上，以便commit阶段使用
       created.return = returnFiber;
-      if (__DEV__) {
-        created._debugInfo = currentDebugInfo;
-      }
       return created;
     }
   }
 
   function reconcileSinglePortal(
-    returnFiber: Fiber,
-    currentFirstChild: Fiber | null,
+    returnFiber: Fiber,// 父节点
+    currentFirstChild: Fiber | null,// 当前第一个节点
     portal: ReactPortal,
     lanes: Lanes,
   ): Fiber {
@@ -1771,50 +1750,44 @@ function createChildReconciler(
   // itself. They will be added to the side-effect list as we pass through the
   // children and the parent.
   function reconcileChildFibersImpl(
-    returnFiber: Fiber,
-    currentFirstChild: Fiber | null,
-    newChild: any,
+    returnFiber: Fiber,// WorkInProgress 当前调和中的Fiber
+    currentFirstChild: Fiber | null,//  上一次已完成的第一个子节点
+    newChild: any,//  即将要渲染的jsx内容
     lanes: Lanes,
   ): Fiber | null {
-    // This function is only recursive for Usables/Lazy and not nested arrays.
-    // That's so that using a Lazy wrapper is unobservable to the Fragment
-    // convention.
-    // If the top level item is an array, we treat it as a set of children,
-    // not as a fragment. Nested arrays on the other hand will be treated as
-    // fragment nodes. Recursion happens at the normal flow.
-
-    // Handle top level unkeyed fragments as if they were arrays.
-    // This leads to an ambiguity between <>{[...]}</> and <>...</>.
-    // We treat the ambiguous cases above the same.
-    // We don't use recursion here because a fragment inside a fragment
-    // is no longer considered "top level" for these purposes.
+    //  只识别一层Fragment <>{[…]}</> and <>…</>。我们对上述模棱两可的情况同样处理
     const isUnkeyedTopLevelFragment =
       typeof newChild === 'object' &&
       newChild !== null &&
       newChild.type === REACT_FRAGMENT_TYPE &&
       newChild.key === null;
+      //  提取Fragment的内容
     if (isUnkeyedTopLevelFragment) {
-      validateFragmentProps(newChild, null, returnFiber);
+      validateFragmentProps(newChild, null, returnFiber);// dev环境校验
       newChild = newChild.props.children;
     }
-
     // Handle object types
     if (typeof newChild === 'object' && newChild !== null) {
+      //  有$$typeof说明是单个
       switch (newChild.$$typeof) {
+        //  处理普通的react元素
         case REACT_ELEMENT_TYPE: {
           const prevDebugInfo = pushDebugInfo(newChild._debugInfo);
-          const firstChild = placeSingleChild(
+          //  协调单个元素并将其标记为单子节点
+          const firstChild = placeSingleChild(//  打上placeMent插入标签，如果current为null
             reconcileSingleElement(
-              returnFiber,
+              returnFiber,//  
               currentFirstChild,
               newChild,
               lanes,
             ),
           );
+           // 恢复之前的调试信息
           currentDebugInfo = prevDebugInfo;
           return firstChild;
         }
-        case REACT_PORTAL_TYPE:
+        //  createPortal创建的元素
+        case REACT_PORTAL_TYPE:// 
           return placeSingleChild(
             reconcileSinglePortal(
               returnFiber,
@@ -1856,6 +1829,7 @@ function createChildReconciler(
         return firstChild;
       }
 
+      //  判断jsx是否有迭代器标识Symbol.iterator，'@@iterator'
       if (getIteratorFn(newChild)) {
         const prevDebugInfo = pushDebugInfo(newChild._debugInfo);
         const firstChild = reconcileChildrenIteratable(
@@ -1867,11 +1841,8 @@ function createChildReconciler(
         currentDebugInfo = prevDebugInfo;
         return firstChild;
       }
-
-      if (
-        enableAsyncIterableChildren &&
-        typeof newChild[ASYNC_ITERATOR] === 'function'
-      ) {
+      //  判断jsx是否有异步迭代。Symbol.asyncIterator
+      if ( enableAsyncIterableChildren && typeof newChild[ASYNC_ITERATOR] === 'function' ) {
         const prevDebugInfo = pushDebugInfo(newChild._debugInfo);
         const firstChild = reconcileChildrenAsyncIteratable(
           returnFiber,
@@ -1883,74 +1854,47 @@ function createChildReconciler(
         return firstChild;
       }
 
-      // Usables are a valid React node type. When React encounters a Usable in
-      // a child position, it unwraps it using the same algorithm as `use`. For
-      // example, for promises, React will throw an exception to unwind the
-      // stack, then replay the component once the promise resolves.
-      //
-      // A difference from `use` is that React will keep unwrapping the value
-      // until it reaches a non-Usable type.
-      //
-      // e.g. Usable<Usable<Usable<T>>> should resolve to T
-      //
-      // The structure is a bit unfortunate. Ideally, we shouldn't need to
-      // replay the entire begin phase of the parent fiber in order to reconcile
-      // the children again. This would require a somewhat significant refactor,
-      // because reconcilation happens deep within the begin phase, and
-      // depending on the type of work, not always at the end. We should
-      // consider as an future improvement.
+      //  判断可以被React解包的情况。{Promise.resolve(<span>Loaded</span>)}
       if (typeof newChild.then === 'function') {
         const thenable: Thenable<any> = (newChild: any);
         const prevDebugInfo = pushDebugInfo((thenable: any)._debugInfo);
         const firstChild = reconcileChildFibersImpl(
           returnFiber,
           currentFirstChild,
-          unwrapThenable(thenable),
+          unwrapThenable(thenable),// 解包Promise
           lanes,
         );
         currentDebugInfo = prevDebugInfo;
         return firstChild;
       }
 
+      //  直接渲染context。没有使用useContext包裹
       if (newChild.$$typeof === REACT_CONTEXT_TYPE) {
-        const context: ReactContext<mixed> = (newChild: any);
+        const context: ReactContext<mixed> = (newChild: any);//{ThemeContext}
         return reconcileChildFibersImpl(
           returnFiber,
           currentFirstChild,
-          readContextDuringReconciliation(returnFiber, context, lanes),
+          readContextDuringReconciliation(returnFiber, context, lanes),// 读取context，并订阅关系，然后以实际内容进行调和
           lanes,
         );
       }
 
       throwOnInvalidObjectType(returnFiber, newChild);
     }
-
-    if (
-      (typeof newChild === 'string' && newChild !== '') ||
-      typeof newChild === 'number' ||
-      typeof newChild === 'bigint'
-    ) {
+    //  纯文本内容
+    if ( (typeof newChild === 'string' && newChild !== '') || typeof newChild === 'number' || typeof newChild === 'bigint' ) {
       return placeSingleChild(
         reconcileSingleTextNode(
           returnFiber,
           currentFirstChild,
-          // $FlowFixMe[unsafe-addition] Flow doesn't want us to use `+` operator with string and bigint
           '' + newChild,
           lanes,
         ),
       );
     }
-
-    if (__DEV__) {
-      if (typeof newChild === 'function') {
-        warnOnFunctionType(returnFiber, newChild);
-      }
-      if (typeof newChild === 'symbol') {
-        warnOnSymbolType(returnFiber, newChild);
-      }
-    }
-
     // Remaining cases are all treated as empty.
+    //  既不是对象，也不是字符串、数字、bigint大型整数
+    //  其他情况全部删除。 {true} {false} {''} {()=>{}}{Symbol('foo')}
     return deleteRemainingChildren(returnFiber, currentFirstChild);
   }
 

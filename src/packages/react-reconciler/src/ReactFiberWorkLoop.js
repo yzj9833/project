@@ -736,23 +736,14 @@ export function peekDeferredLane(): Lane {
 }
 
 export function scheduleUpdateOnFiber(
-  root: FiberRoot,
-  fiber: Fiber,
+  root: FiberRoot,//FiberRootNode
+  fiber: Fiber,// rootFiber
   lane: Lane
 ) {
-  // Check if the work loop is currently suspended and waiting for data to
-  // finish loading.
-  if (
-    // Suspended render phase
-    (root === workInProgressRoot &&
-      workInProgressSuspendedReason === SuspendedOnData) ||
-    // Suspended commit phase
-    root.cancelPendingCommit !== null
-  ) {
+  // 检查是否处于Suspense暂停状态（初始化时不触发）
+  if ( (root === workInProgressRoot && workInProgressSuspendedReason === SuspendedOnData) ||  root.cancelPendingCommit !== null ) {
     //  commit阶段暂停，等待异步操作
     //  use、suspense抛出了promise时。主要是suspense
-    // The incoming update might unblock the current render. Interrupt the
-    // current attempt and restart from the top.
     //  暂停更新
     prepareFreshStack(root, NoLanes);
     markRootSuspended(
@@ -762,14 +753,10 @@ export function scheduleUpdateOnFiber(
       workInProgressRootDidSkipSuspendedSiblings
     );
   }
-
-  // Mark that the root has a pending update.
+  // 标记根节点有更新（关键步骤）
   markRootUpdated(root, lane);
-
-  if (
-    (executionContext & RenderContext) !== NoLanes &&
-    root === workInProgressRoot
-  ) {
+  //  处理渲染阶段的更新（初始化时不触发）。selective hydration.触发
+  if ( (executionContext & RenderContext) !== NoLanes && root === workInProgressRoot ) {
     // This update was dispatched during the render phase. This is a mistake
     // if the update originates from user space (with the exception of local
     // hook updates, which are handled differently and don't reach this
@@ -783,8 +770,7 @@ export function scheduleUpdateOnFiber(
       lane
     );
   } else {
-    // This is a normal update, scheduled from outside the render phase. For
-    // example, during an input event.
+   // 正常情况下的调度，比如input输入、初始化
     if (enableUpdaterTracking) {
       if (isDevToolsPresent) {
         addFiberToLanesMap(root, fiber, lane);
@@ -792,7 +778,7 @@ export function scheduleUpdateOnFiber(
     }
 
     warnIfUpdatesNotWrappedWithActDEV(fiber);
-
+    // Transition相关处理（初始化时不触发）
     if (enableTransitionTracing) {
       const transition = ReactSharedInternals.T;
       if (transition !== null && transition.name != null) {
@@ -805,7 +791,7 @@ export function scheduleUpdateOnFiber(
         addTransitionToLanesMap(root, transition, lane);
       }
     }
-
+    // 处理中间渲染的更新（初始化时不触发）
     if (root === workInProgressRoot) {
       // Received an update to a tree that's in the middle of rendering. Mark
       // that there was an interleaved update work on this root.
@@ -880,7 +866,7 @@ export function performWorkOnRoot(
   lanes: Lanes, // 优先级通道
   forceSync: boolean // 是否强制同步渲染
 ): void {
-  // 确保当前没有正在进行的渲染或提交
+  // 上下文安全检查：确保当前没有正在进行的渲染或提交
   if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
     throw new Error("Should not already be working."); // 如果正在工作，抛出错误
   }
@@ -891,7 +877,6 @@ export function performWorkOnRoot(
     !includesBlockingLane(lanes) && // 当前通道中没有阻塞通道
     !includesExpiredLane(root, lanes); // 当前通道中没有过期通道
   // 根据是否启用时间切片选择渲染方式
-  console.log('test123：当前渲染:',shouldTimeSlice?'renderRootConcurrent':"renderRootSync")
   let exitStatus = shouldTimeSlice
     ? renderRootConcurrent(root, lanes) // 异步渲染
     : renderRootSync(root, lanes); // 同步渲染
@@ -970,6 +955,7 @@ export function performWorkOnRoot(
     } while (true);
   }
   // 确保根节点的调度是最新的
+  debugger
   ensureRootIsScheduled(root);
 }
 
@@ -1687,8 +1673,8 @@ function prepareFreshStack(root: FiberRoot, lanes: Lanes): Fiber {
 
 function resetSuspendedWorkLoopOnUnwind(fiber: Fiber) {
   // Reset module-level state that was set during the render phase.
-  resetContextDependencies();
-  resetHooksOnUnwind(fiber);
+  resetContextDependencies();//重置与 Context 相关的依赖信息
+  resetHooksOnUnwind(fiber);//重置与 React Hooks 相关的状态
   resetChildReconcilerOnUnwind();
 }
 
@@ -1712,57 +1698,34 @@ function handleThrow(root: FiberRoot, thrownValue: any): void {
   if (__DEV__ || !disableStringRefs) {
     resetCurrentFiber();
   }
-
-  if (thrownValue === SuspenseException) {
-    // This is a special type of exception used for Suspense. For historical
-    // reasons, the rest of the Suspense implementation expects the thrown value
-    // to be a thenable, because before `use` existed that was the (unstable)
-    // API for suspending. This implementation detail can change later, once we
-    // deprecate the old API in favor of `use`.
+  
+  if (thrownValue === SuspenseException) { //  use API抛出的错误
+    //  获取被挂起的Promise
     thrownValue = getSuspendedThenable();
+    //  
     workInProgressSuspendedReason =
-      // TODO: Suspending the work loop during the render phase is
-      // currently not compatible with sibling prerendering. We will add
-      // this optimization back in a later step.
       !enableSiblingPrerendering &&
       shouldRemainOnPreviousScreen() &&
-      // Check if there are other pending updates that might possibly unblock this
-      // component from suspending. This mirrors the check in
-      // renderDidSuspendDelayIfPossible. We should attempt to unify them somehow.
-      // TODO: Consider unwinding immediately, using the
-      // SuspendedOnHydration mechanism.
       !includesNonIdleWork(workInProgressRootSkippedLanes) &&
       !includesNonIdleWork(workInProgressRootInterleavedUpdatedLanes)
-        ? // Suspend work loop until data resolves
-          SuspendedOnData
-        : // Don't suspend work loop, except to check if the data has
-          // immediately resolved (i.e. in a microtask). Otherwise, trigger the
-          // nearest Suspense fallback.
-          SuspendedOnImmediate;
+        ? SuspendedOnData// 完全暂停
+        : SuspendedOnImmediate;// 检查是否在微任务中立即解析，没有则触发fallback
   } else if (thrownValue === SuspenseyCommitException) {
     thrownValue = getSuspendedThenable();
     workInProgressSuspendedReason = SuspendedOnInstance;
   } else if (thrownValue === SelectiveHydrationException) {
-    // An update flowed into a dehydrated boundary. Before we can apply the
-    // update, we need to finish hydrating. Interrupt the work-in-progress
-    // render so we can restart at the hydration lane.
-    //
-    // The ideal implementation would be able to switch contexts without
-    // unwinding the current stack.
-    //
-    // We could name this something more general but as of now it's the only
-    // case where we think this should happen.
+    //  在选择性水合时，脱水内容流入客户端，此时正在水合过程，但用户与页面交互并触发了尚未水合的组件。
+    //  此时标记应该先处理水合
     workInProgressSuspendedReason = SuspendedOnHydration;
   } else {
-    // This is a regular error.
+    // 常规错误，判断promise
     const isWakeable =
       thrownValue !== null &&
       typeof thrownValue === "object" &&
       typeof thrownValue.then === "function";
 
     workInProgressSuspendedReason = isWakeable
-      ? // A wakeable object was thrown by a legacy Suspense implementation.
-        // This has slightly different behavior than suspending with `use`.
+      ? //与use不同。常规的可以被唤起的错误.也就是可以执行
         SuspendedOnDeprecatedThrowPromise
       : // This is a regular error. If something earlier in the component already
         // suspended, we must clear the thenable state to unblock the work loop.
@@ -2003,7 +1966,7 @@ export function renderHasNotSuspendedYet(): boolean {
 // and more similar. Not sure it makes sense to maintain forked paths. Consider
 // unifying them again.
 function renderRootSync(root: FiberRoot, lanes: Lanes) {
-  debugger
+  //  标记渲染阶段
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
   const prevDispatcher = pushDispatcher(root.containerInfo);
@@ -2027,7 +1990,7 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
         movePendingFibersToMemoized(root, lanes);
       }
     }
-
+    //  初始化状态，清除旧数据，定义workinprogress等数据
     workInProgressTransitions = getTransitionsForLanes(root, lanes);
     prepareFreshStack(root, lanes);
   }
@@ -2045,27 +2008,16 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
   let didSuspendInShell = false;
   outer: do {
     try {
-      if (
-        workInProgressSuspendedReason !== NotSuspended &&
-        workInProgress !== null
-      ) {
-        // The work loop is suspended. During a synchronous render, we don't
-        // yield to the main thread. Immediately unwind the stack. This will
-        // trigger either a fallback or an error boundary.
-        // TODO: For discrete and "default" updates (anything that's not
-        // flushSync), we want to wait for the microtasks the flush before
-        // unwinding. Will probably implement this using renderRootConcurrent,
-        // or merge renderRootSync and renderRootConcurrent into the same
-        // function and fork the behavior some other way.
+      //  捕获到error，进行重试
+      if ( workInProgressSuspendedReason !== NotSuspended && workInProgress !== null ) {
+        // 因为是同步模式，直接开始后续栈的执行
         const unitOfWork = workInProgress;
         const thrownValue = workInProgressThrownValue;
         switch (workInProgressSuspendedReason) {
-          case SuspendedOnHydration: {
-            // Selective hydration. An update flowed into a dehydrated tree.
-            // Interrupt the current render so the work loop can switch to the
-            // hydration lane.
-            resetWorkInProgressStack();
-            workInProgressRootExitStatus = RootDidNotComplete;
+          case SuspendedOnHydration: {// 选择性水合
+            resetWorkInProgressStack();// 会重置环境，并挂起当前的workInProgress。会向上unwindInterruptedWork，清空状态
+            workInProgressRootExitStatus = RootDidNotComplete;//标记当前状态，root没有complete
+            //  退出后通过ensureRootIsScheduled 进行重新调度。此时优先级已经提升。会优先水合
             break outer;
           }
           case SuspendedOnImmediate:
@@ -2080,6 +2032,7 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
             const reason = workInProgressSuspendedReason;
             workInProgressSuspendedReason = NotSuspended;
             workInProgressThrownValue = null;
+            debugger
             throwAndUnwindWorkLoop(root, unitOfWork, thrownValue, reason);
             break;
           }
@@ -2089,6 +2042,7 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
       break;
     } catch (thrownValue) {
       handleThrow(root, thrownValue);
+      debugger
     }
   } while (true);
 
@@ -2139,7 +2093,6 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
 // The work loop is an extremely hot path. Tell Closure not to inline it.
 /** @noinline */
 function workLoopSync() {
-  console.log('执行同步workLoopSync')
   // Perform work without checking if we need to yield between fiber.
   while (workInProgress !== null) {
     performUnitOfWork(workInProgress);
@@ -2392,6 +2345,7 @@ function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
       }
       break;
     } catch (thrownValue) {
+      debugger
       handleThrow(root, thrownValue);
     }
   } while (true);
@@ -2450,30 +2404,10 @@ function performUnitOfWork(unitOfWork: Fiber): void {
   let next;
   if (enableProfilerTimer && (unitOfWork.mode & ProfileMode) !== NoMode) {
     startProfilerTimer(unitOfWork);
-    if (__DEV__) {
-      next = runWithFiberInDEV(
-        unitOfWork,
-        beginWork,
-        current,
-        unitOfWork,
-        entangledRenderLanes
-      );
-    } else {
       next = beginWork(current, unitOfWork, entangledRenderLanes);
-    }
     stopProfilerTimerIfRunningAndRecordDuration(unitOfWork);
   } else {
-    if (__DEV__) {
-      next = runWithFiberInDEV(
-        unitOfWork,
-        beginWork,
-        current,
-        unitOfWork,
-        entangledRenderLanes
-      );
-    } else {
       next = beginWork(current, unitOfWork, entangledRenderLanes);
-    }
   }
 
   if (!disableStringRefs) {
@@ -2617,17 +2551,14 @@ function throwAndUnwindWorkLoop(
   thrownValue: mixed,
   suspendedReason: SuspendedReason
 ) {
-  // This is a fork of performUnitOfWork specifcally for unwinding a fiber
-  // that threw an exception.
+  // 这是performUnitOfWork的一个分支，专门用于展开抛出异常的fiber
   //
-  // Return to the normal work loop. This will unwind the stack, and potentially
-  // result in showing a fallback.
+  // 重置hooks、上下文依赖、thenable等内容
   resetSuspendedWorkLoopOnUnwind(unitOfWork);
 
   const returnFiber = unitOfWork.return;
   try {
-    // Find and mark the nearest Suspense or error boundary that can handle
-    // this "exception".
+     // 寻找最近可以接受这个错误的suspense或者errorBoundary
     const didFatal = throwException(
       root,
       returnFiber,
@@ -2653,29 +2584,21 @@ function throwAndUnwindWorkLoop(
     }
   }
 
-  if (unitOfWork.flags & Incomplete) {
-    // Unwind the stack until we reach the nearest boundary.
-    let skipSiblings;
+  if (unitOfWork.flags & Incomplete) {//在throwException中打上了Incomplete
+    let skipSiblings;// 判断是否过滤兄弟节点的解绑
     if (!enableSiblingPrerendering) {
       skipSiblings = true;
     } else {
       if (
-        // The current algorithm for both hydration and error handling assumes
-        // that the tree is rendered sequentially. So we always skip the siblings.
-        getIsHydrating() ||
+        getIsHydrating() ||// 水合场景不能跳过。确保一致
         suspendedReason === SuspendedOnError
       ) {
         skipSiblings = true;
-        // We intentionally don't set workInProgressRootDidSkipSuspendedSiblings,
-        // because we don't want to trigger another prerender attempt.
       } else if (
-        // Check whether this is a prerender
         !workInProgressRootIsPrerendering &&
-        // Offscreen rendering is also a form of speculative rendering
         !includesSomeLane(workInProgressRootRenderLanes, OffscreenLane)
       ) {
-        // This is not a prerender. Skip the siblings during this render. A
-        // separate prerender will be scheduled for later.
+        // 非预渲染
         skipSiblings = true;
         workInProgressRootDidSkipSuspendedSiblings = true;
 

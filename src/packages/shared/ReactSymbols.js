@@ -58,8 +58,8 @@ export function getIteratorFn(maybeIterable: ?any): ?() => ?Iterator<any> {
     return null;
   }
   const maybeIterator =
-    (MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL]) ||
-    maybeIterable[FAUX_ITERATOR_SYMBOL];
+    (MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL]) ||//Symbol.iterator
+    maybeIterable[FAUX_ITERATOR_SYMBOL];//'@@iterator'
   if (typeof maybeIterator === 'function') {
     return maybeIterator;
   }

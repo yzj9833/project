@@ -6,5 +6,9 @@
   "flow.useNPMPackagedFlow": true,
   "eslint.enable": false,
   "editor.formatOnSave": false,
-  "javascript.format.enable": false
+  "javascript.format.enable": false,
+  "cSpell.words": [
+    "Suspensey",
+    "wakeable"
+  ]
 }

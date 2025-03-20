@@ -328,45 +328,33 @@ export function isFunctionClassComponent(
 // This is used to create an alternate fiber to do work on.
 export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
   let workInProgress = current.alternate;
+  //  不存在alternate树
   if (workInProgress === null) {
-    // We use a double buffering pooling technique because we know that we'll
-    // only ever need at most two versions of a tree. We pool the "other" unused
-    // node that we're free to reuse. This is lazily created to avoid allocating
-    // extra objects for things that are never updated. It also allow us to
-    // reclaim the extra memory if needed.
+     // 首次渲染或 alternate 被回收的情况
+    // 采用双缓冲池技术：一个树用于显示，另一个用于后台工作
+    // 这种懒创建的方式可以节省内存，必要时还能回收内存
     workInProgress = createFiber(
-      current.tag,
-      pendingProps,
-      current.key,
-      current.mode,
+      current.tag,//  类型
+      pendingProps,// props
+      current.key,//  key
+      current.mode,// 渲染类型
     );
-    workInProgress.elementType = current.elementType;
-    workInProgress.type = current.type;
-    workInProgress.stateNode = current.stateNode;
-
-    if (__DEV__) {
-      // DEV-only fields
-
-      workInProgress._debugOwner = current._debugOwner;
-      if (enableOwnerStacks) {
-        workInProgress._debugStack = current._debugStack;
-        workInProgress._debugTask = current._debugTask;
-      }
-      workInProgress._debugHookTypes = current._debugHookTypes;
-    }
-
+    // 复用不变的类型
+    workInProgress.elementType = current.elementType;// reacttype
+    workInProgress.type = current.type;// type
+    workInProgress.stateNode = current.stateNode;// 复用相同的实例/DOM。
+    // 绑定双缓存对应的两棵树关系
     workInProgress.alternate = current;
     current.alternate = workInProgress;
   } else {
+    // 存在 alternate，进行复用
+    // 直接在workInProgress的基础上进行更新
     workInProgress.pendingProps = pendingProps;
     // Needed because Blocks store data on type.
     workInProgress.type = current.type;
 
-    // We already have an alternate.
-    // Reset the effect tag.
+    // 重置所有副作用。因为新的周期，之前的已经处理完毕了
     workInProgress.flags = NoFlags;
-
-    // The effects are no longer valid.
     workInProgress.subtreeFlags = NoFlags;
     workInProgress.deletions = null;
 
@@ -380,20 +368,23 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
     }
   }
 
-  // Reset all effects except static ones.
-  // Static effects are not specific to a render.
+  // 清除所有动态标签。暂增删改查。placement、Update、Deletion等
   workInProgress.flags = current.flags & StaticMask;
+
+  // 2. 复制子节点相关信息
   workInProgress.childLanes = current.childLanes;
   workInProgress.lanes = current.lanes;
-
   workInProgress.child = current.child;
+
+// 3. 复制状态相关信息
   workInProgress.memoizedProps = current.memoizedProps;
   workInProgress.memoizedState = current.memoizedState;
   workInProgress.updateQueue = current.updateQueue;
 
-  // Clone the dependencies object. This is mutated during the render phase, so
-  // it cannot be shared with the current fiber.
+   // 复制Context 订阅关系
+  // 这个对象在渲染阶段会被修改，所以不能共享。需要复制一份。
   const currentDependencies = current.dependencies;
+  //  保留订阅关系
   workInProgress.dependencies =
     currentDependencies === null
       ? null
@@ -409,6 +400,7 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
           };
 
   // These will be overridden during the parent's reconciliation
+  //  暂时复用，会在父节点的 reconciliation 过程中被覆盖
   workInProgress.sibling = current.sibling;
   workInProgress.index = current.index;
   workInProgress.ref = current.ref;
@@ -417,25 +409,6 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
   if (enableProfilerTimer) {
     workInProgress.selfBaseDuration = current.selfBaseDuration;
     workInProgress.treeBaseDuration = current.treeBaseDuration;
-  }
-
-  if (__DEV__) {
-    workInProgress._debugInfo = current._debugInfo;
-    workInProgress._debugNeedsRemount = current._debugNeedsRemount;
-    switch (workInProgress.tag) {
-      case FunctionComponent:
-      case SimpleMemoComponent:
-        workInProgress.type = resolveFunctionForHotReloading(current.type);
-        break;
-      case ClassComponent:
-        workInProgress.type = resolveClassForHotReloading(current.type);
-        break;
-      case ForwardRef:
-        workInProgress.type = resolveForwardRefForHotReloading(current.type);
-        break;
-      default:
-        break;
-    }
   }
 
   return workInProgress;

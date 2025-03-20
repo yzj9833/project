@@ -175,6 +175,7 @@ function reenterHydrationStateFromDehydratedSuspenseInstance(
   if (!supportsHydration) {
     return false;
   }
+  //  找到suspenseInstance内部可以进行水合的节点
   nextHydratableInstance =
     getFirstHydratableChildWithinSuspenseInstance(suspenseInstance);
   hydrationParentFiber = fiber;
@@ -184,7 +185,7 @@ function reenterHydrationStateFromDehydratedSuspenseInstance(
   hydrationDiffRootDEV = null;
   rootOrSingletonContext = false;
   if (treeContext !== null) {
-    restoreSuspendedTreeContext(fiber, treeContext);
+    restoreSuspendedTreeContext(fiber, treeContext);// 恢复上下文
   }
   return true;
 }
@@ -270,29 +271,37 @@ function tryHydrateText(fiber: Fiber, nextInstance: any) {
 }
 
 function tryHydrateSuspense(fiber: Fiber, nextInstance: any) {
-  // fiber is a SuspenseComponent Fiber
+  //  获取可以水合的节点
   const suspenseInstance = canHydrateSuspenseInstance(
     nextInstance,
     rootOrSingletonContext,
   );
   if (suspenseInstance !== null) {
+    //  创建suspenseState对象
     const suspenseState: SuspenseState = {
       dehydrated: suspenseInstance,
       treeContext: getSuspendedTreeContext(),
       retryLane: OffscreenLane,
     };
+    // 将创建的状态对象赋值给 Suspense fiber 的 memoizedState
+    // 这样 Suspense 组件就知道它有一个脱水状态需要处理
     fiber.memoizedState = suspenseState;
-    // Store the dehydrated fragment as a child fiber.
-    // This simplifies the code for getHostSibling and deleting nodes,
-    // since it doesn't have to consider all Suspense boundaries and
-    // check if they're dehydrated ones or not.
+
+    // 创建一个表示脱水片段的 fiber 节点
+    // 这简化了后续的节点操作，如查找兄弟节点和删除节点
+    // 因为不需要考虑所有 Suspense 边界并检查它们是否是脱水状态
     const dehydratedFragment =
       createFiberFromDehydratedFragment(suspenseInstance);
+      // 设置脱水片段 fiber 的父指针指向 Suspense fiber
     dehydratedFragment.return = fiber;
+
+    // 将 Suspense fiber 的子指针指向脱水片段
+    // 这建立了 Suspense 和其脱水内容之间的连接
     fiber.child = dehydratedFragment;
     hydrationParentFiber = fiber;
-    // While a Suspense Instance does have children, we won't step into
-    // it during the first pass. Instead, we'll reenter it later.
+    // 将下一个待水合实例设为 null
+    // 这是因为虽然 Suspense 实例有子节点，但我们不会在第一次遍历时处理它们
+    // 而是在后续的特殊处理中重新进入这个 Suspense 进行水合
     nextHydratableInstance = null;
     return true;
   }
