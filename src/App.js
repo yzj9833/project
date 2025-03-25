@@ -10,8 +10,8 @@ import EmptyComponent from "@/components/EmptyComponent";
 import AutomaticApp from "@/components/batching/Automatic";
 import ConcurrentApp from "@/components/batching/Concurrent";
 
-// import Counter from "@/components/counter";
-const Counter = lazy(() => import("@/components/counter"));
+import Counter from "@/components/counter";
+const Counter2 = lazy(() => import("@/components/counter"));
 
 // const TestContext = createContext('test value');
 function App() {
@@ -19,7 +19,8 @@ function App() {
     <div id="app">
       {/* <RefApp /> */}
       {/* <TestContext.Provider value="provided value"> */}
-      <Suspense fallback={'loading counter'}><Counter name={1}/></Suspense>
+      <Suspense fallback={'loading counter'}><Counter2 name={1}/></Suspense>
+      <Counter name={1}/>
       
       {/* </TestContext.Provider> */}
       {/* <UseEffectApp /> */}

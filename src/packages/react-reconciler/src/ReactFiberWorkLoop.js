@@ -955,7 +955,6 @@ export function performWorkOnRoot(
     } while (true);
   }
   // 确保根节点的调度是最新的
-  debugger
   ensureRootIsScheduled(root);
 }
 
@@ -1053,14 +1052,11 @@ function finishConcurrentRender(
 ) {
   let renderEndTime = 0;
   if (enableProfilerTimer && enableComponentPerformanceTrack) {
-    // Track when we finished the last unit of work, before we actually commit it.
-    // The commit can be suspended/blocked until we commit it.
+    // 性能分析，记录时间
     renderEndTime = now();
   }
 
-  // TODO: The fact that most of these branches are identical suggests that some
-  // of the exit statuses are not best modeled as exit statuses and should be
-  // tracked orthogonally.
+  // exitStatus为前一步骤
   switch (exitStatus) {
     case RootInProgress:
     case RootFatalErrored: {
@@ -2032,7 +2028,6 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
             const reason = workInProgressSuspendedReason;
             workInProgressSuspendedReason = NotSuspended;
             workInProgressThrownValue = null;
-            debugger
             throwAndUnwindWorkLoop(root, unitOfWork, thrownValue, reason);
             break;
           }
@@ -2042,7 +2037,6 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
       break;
     } catch (thrownValue) {
       handleThrow(root, thrownValue);
-      debugger
     }
   } while (true);
 
@@ -2345,7 +2339,6 @@ function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
       }
       break;
     } catch (thrownValue) {
-      debugger
       handleThrow(root, thrownValue);
     }
   } while (true);
@@ -2670,41 +2663,23 @@ function panicOnRootError(root: FiberRoot, error: mixed) {
 }
 
 function completeUnitOfWork(unitOfWork: Fiber): void {
-  // Attempt to complete the current unit of work, then move to the next
-  // sibling. If there are no more siblings, return to the parent fiber.
+  //  尝试完成工作单元。深度优先遍历中的上行阶段。存在兄弟节点则优先兄弟节点的下行
   let completedWork: Fiber = unitOfWork;
   do {
     if ((completedWork.flags & Incomplete) !== NoFlags) {
-      // This fiber did not complete, because one of its children did not
-      // complete. Switch to unwinding the stack instead of completing it.
-      //
-      // The reason "unwind" and "complete" is interleaved is because when
-      // something suspends, we continue rendering the siblings even though
-      // they will be replaced by a fallback.
+      // 存在Incomplete标识，说明需要使用unwindUnitOfWork
+      //存在预渲染，跳过suspense的unwind情况。此时completeUnitOfWork时，需要处理这种情况
       const skipSiblings = workInProgressRootDidSkipSuspendedSiblings;
       unwindUnitOfWork(completedWork, skipSiblings);
       return;
     }
 
-    // The current, flushed, state of this fiber is the alternate. Ideally
-    // nothing should rely on this, but relying on it here means that we don't
-    // need an additional field on the work in progress.
-    const current = completedWork.alternate;
+    const current = completedWork.alternate;//
     const returnFiber = completedWork.return;
 
     let next;
     startProfilerTimer(completedWork);
-    if (__DEV__) {
-      next = runWithFiberInDEV(
-        completedWork,
-        completeWork,
-        current,
-        completedWork,
-        entangledRenderLanes
-      );
-    } else {
-      next = completeWork(current, completedWork, entangledRenderLanes);
-    }
+    next = completeWork(current, completedWork, entangledRenderLanes);
     if (enableProfilerTimer && (completedWork.mode & ProfileMode) !== NoMode) {
       // Update render duration assuming we didn't error.
       stopProfilerTimerIfRunningAndRecordIncompleteDuration(completedWork);

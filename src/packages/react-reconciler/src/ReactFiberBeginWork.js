@@ -1793,7 +1793,6 @@ function mountLazyComponent(
   elementType: any,// React.lazy返回的对象.包含了如何加载实际组件信息的特殊对象。$$typeof,_init,_payload
   renderLanes: Lanes,
 ) {
-  debugger
   // 在Legacy模式下重置挂起的当前Fiber
   // 这主要处理特殊的挂载情况，确保在Legacy模式下正确处理Suspense
   resetSuspendedCurrentOnMountInLegacyMode(_current, workInProgress);
@@ -2229,7 +2228,6 @@ function updateSuspenseComponent(
       );
       // 标记当前 Suspense 组件为挂起状态
       workInProgress.memoizedState = SUSPENDED_MARKER;
-      debugger
       // 启用过渡追踪的特殊处理   
       if (enableTransitionTracing) {
         const currentTransitions = getPendingTransitions();

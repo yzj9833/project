@@ -494,13 +494,13 @@ function prepareToHydrateHostTextInstance(fiber: Fiber): void {
     );
   }
 
-  const textInstance: TextInstance = fiber.stateNode;
-  const textContent: string = fiber.memoizedProps;
+  const textInstance: TextInstance = fiber.stateNode;// 当前的DOM 实例
+  const textContent: string = fiber.memoizedProps;//  Fiber 中预期的文本内容
   const shouldWarnIfMismatchDev = !didSuspendOrErrorDEV;
   let parentProps = null;
   // We assume that prepareToHydrateHostTextInstance is called in a context where the
   // hydration parent is the parent host component of this host text.
-  const returnFiber = hydrationParentFiber;
+  const returnFiber = hydrationParentFiber;//水合的父组件
   if (returnFiber !== null) {
     switch (returnFiber.tag) {
       case HostRoot: {
@@ -540,7 +540,7 @@ function prepareToHydrateHostTextInstance(fiber: Fiber): void {
     }
     // TODO: What if it's a SuspenseInstance?
   }
-
+  // 关联DOM跟Fiber的props内容
   const didHydrate = hydrateTextInstance(
     textInstance,
     textContent,
@@ -583,7 +583,9 @@ function skipPastDehydratedSuspenseInstance(
         'This error is likely caused by a bug in React. Please file an issue.',
     );
   }
+  //  获取脱水内容
   const suspenseState: null | SuspenseState = fiber.memoizedState;
+  //  获取脱水的服务端渲染内容
   const suspenseInstance: null | SuspenseInstance =
     suspenseState !== null ? suspenseState.dehydrated : null;
 
@@ -593,7 +595,6 @@ function skipPastDehydratedSuspenseInstance(
         'This error is likely caused by a bug in React. Please file an issue.',
     );
   }
-
   return getNextHydratableInstanceAfterSuspenseInstance(suspenseInstance);
 }
 
@@ -614,45 +615,45 @@ function popToNextHostParent(fiber: Fiber): void {
     }
   }
 }
-
+//  判断当前传入的fiber是否已经水合成功
 function popHydrationState(fiber: Fiber): boolean {
+  //  当前渲染器不支持水合。返回false
   if (!supportsHydration) {
     return false;
   }
+  //  当前Fiber并不是水合父组件
   if (fiber !== hydrationParentFiber) {
-    // We're deeper than the current hydration context, inside an inserted
-    // tree.
     return false;
   }
+  // 当前不在水合过程中但在水合上下文中
   if (!isHydrating) {
-    // If we're not currently hydrating but we're in a hydration context, then
-    // we were an insertion and now need to pop up reenter hydration of our
-    // siblings.
+    //  说明这是一个插入操作，需要弹出并重新进入兄弟节点的水合过程。
     popToNextHostParent(fiber);
     isHydrating = true;
     return false;
   }
 
   let shouldClear = false;
+  //  判断是否需要清理未水合的节点
   if (supportsSingletons) {
-    // With float we never clear the Root, or Singleton instances. We also do not clear Instances
-    // that have singleton text content
+    //  单例节点
     if (
       fiber.tag !== HostRoot &&
       fiber.tag !== HostSingleton &&
       !(
         fiber.tag === HostComponent &&
-        (!shouldDeleteUnhydratedTailInstances(fiber.type) ||
-          shouldSetTextContent(fiber.type, fiber.memoizedProps))
+        (!shouldDeleteUnhydratedTailInstances(fiber.type) ||//  是否应该删除未水合的尾部实例
+          shouldSetTextContent(fiber.type, fiber.memoizedProps))//  是否应该直接设置文本内容
       )
+      //  节点不是HostComponent元素
+      // (fiber.tag !== HostComponent 
+      //  或者应该删除未水合尾部且不应设置文本内容
+      // || (shouldDeleteUnhydratedTailInstances(fiber.type) && !shouldSetTextContent(fiber.type, fiber.memoizedProps)))
     ) {
+    
       shouldClear = true;
     }
   } else {
-    // If we have any remaining hydratable nodes, we need to delete them now.
-    // We only do this deeper than head and body since they tend to have random
-    // other nodes in them. We also ignore components with pure text content in
-    // side of them. We also don't delete anything inside the root container.
     if (
       fiber.tag !== HostRoot &&
       (fiber.tag !== HostComponent ||
@@ -662,17 +663,28 @@ function popHydrationState(fiber: Fiber): boolean {
       shouldClear = true;
     }
   }
+  //  需要清理未水合节点
   if (shouldClear) {
+    //  获取待水合的的实例
+    //  服务端跟客户端不一致，需要报错
+      // {typeof window === 'undefined' && (导致没有
+      //   <p>这段内容只在服务端渲染时出现</p>
+      // )}
     const nextInstance = nextHydratableInstance;
     if (nextInstance) {
+      //  报错
       warnIfUnhydratedTailNodes(fiber);
       throwOnHydrationMismatch(fiber);
     }
   }
+  //  退出当前水合Fiber，将return作为下一个水合父组件
   popToNextHostParent(fiber);
+  //  定义下一个需要水合的实例
   if (fiber.tag === SuspenseComponent) {
+    //  找到suspense的边界，然后获取下一个未水合的dom节点
     nextHydratableInstance = skipPastDehydratedSuspenseInstance(fiber);
   } else {
+    // 直接找下一个
     nextHydratableInstance = hydrationParentFiber
       ? getNextHydratableSibling(fiber.stateNode)
       : null;

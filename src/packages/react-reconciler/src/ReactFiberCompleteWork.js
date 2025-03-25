@@ -439,26 +439,32 @@ function updateHostComponent(
   newProps: Props,
   renderLanes: Lanes,
 ) {
+  // supportsMutation 表示当前渲染器是否支持直接修改DOM
+  // 大多数环境（如浏览器）都支持mutation模式
   if (supportsMutation) {
-    // If we have an alternate, that means this is an update and we need to
-    // schedule a side-effect to do the updates.
+    //  需要调度一个副作用执行DOM更新
     const oldProps = current.memoizedProps;
     if (oldProps === newProps) {
-      // In mutation mode, this is sufficient for a bailout because
-      // we won't touch this node even if children changed.
       return;
     }
-
+    // 标记这个fiber节点需要更新
+    // 这会将Update标志添加到fiber.flags中
     markUpdate(workInProgress);
   } else if (supportsPersistence) {
+      // supportsPersistence 表示是否支持持久化模式
+      // 持久化模式不直接修改DOM，而是创建新的DOM树
+      // 主要用于一些特殊环境，如React Native
+
+  // 获取当前DOM实例
     const currentInstance = current.stateNode;
     const oldProps = current.memoizedProps;
-    // If there are no effects associated with this node, then none of our children had any updates.
-    // This guarantees that we can reuse all of them.
+    
+    //  校验两棵树的子节点，判断是否需要克隆。当节点以及子节点有变化时，需要克隆一个副本。
     const requiresClone = doesRequireClone(current, workInProgress);
+
+    //  
     if (!requiresClone && oldProps === newProps) {
-      // No changes, just reuse the existing instance.
-      // Note that this might release a previous clone.
+      //  复用现有实例
       workInProgress.stateNode = currentInstance;
       return;
     }
@@ -494,9 +500,9 @@ function updateHostComponent(
       markCloned(workInProgress);
     }
 
-    // Certain renderers require commit-time effects for initial mount.
-    // (eg DOM renderer supports auto-focus for certain elements).
-    // Make sure such renderers get scheduled for later work.
+   // 某些渲染器需要在初始挂载时执行提交时效果
+    // (例如DOM渲染器支持某些元素的自动聚焦)
+    // 确保这些渲染器被安排进行后续工作
     if (
       finalizeInitialChildren(newInstance, type, newProps, currentHostContext)
     ) {
@@ -510,8 +516,8 @@ function updateHostComponent(
         // Otherwise parents won't know that there are new children to propagate upwards.
         markUpdate(workInProgress);
       }
-    } else if (!passChildrenWhenCloningPersistedNodes) {
-      // If children have changed, we have to add them all to the set.
+    } else if (!passChildrenWhenCloningPersistedNodes) {// 如果需要克隆但不传递子节点
+      // 将子节点的dom节点加入到当前fiber的stateNode中
       appendAllChildren(
         newInstance,
         workInProgress,
@@ -522,36 +528,24 @@ function updateHostComponent(
   }
 }
 
-// This function must be called at the very end of the complete phase, because
-// it might throw to suspend, and if the resource immediately loads, the work
-// loop will resume rendering as if the work-in-progress completed. So it must
-// fully complete.
-// TODO: This should ideally move to begin phase, but currently the instance is
-// not created until the complete phase. For our existing use cases, host nodes
-// that suspend don't have children, so it doesn't matter. But that might not
-// always be true in the future.
+// 暂时放complete最后，理论上应该放beginWork中
+// 处理可能需要预加载的资源，并在必要时暂停提交
 function preloadInstanceAndSuspendIfNeeded(
   workInProgress: Fiber,
   type: Type,
   props: Props,
   renderLanes: Lanes,
 ) {
-  if (!maySuspendCommit(type, props)) {
-    // If this flag was set previously, we can remove it. The flag
-    // represents whether this particular set of props might ever need to
-    // suspend. The safest thing to do is for maySuspendCommit to always
-    // return true, but if the renderer is reasonably confident that the
-    // underlying resource won't be evicted, it can return false as a
-    // performance optimization.
+  //  
+  if (!maySuspendCommit(type, props)) {// 判断自居是否依赖未加载的资源
+    //  移除可能需要暂停提交的标识
     workInProgress.flags &= ~MaySuspendCommit;
     return;
   }
 
-  // Mark this fiber with a flag. This gets set on all host instances
-  // that might possibly suspend, even if they don't need to suspend
-  // currently. We use this when revealing a prerendered tree, because
-  // even though the tree has "mounted", its resources might not have
-  // loaded yet.
+  // 给当前 Fiber 节点添加 MaySuspendCommit 标记
+  // 这个标记表示该组件可能需要在提交阶段暂停
+  // 即使当前不需要暂停，也会添加此标记，用于后续可能的资源加载情况
   workInProgress.flags |= MaySuspendCommit;
 
   // preload the instance if necessary. Even if this is an urgent render there
@@ -732,9 +726,11 @@ function cutOffTailIfNeeded(
 }
 
 function bubbleProperties(completedWork: Fiber) {
-  const didBailout =
-    completedWork.alternate !== null &&
-    completedWork.alternate.child === completedWork.child;
+  //  上一次渲染的Fiber，且子节点没有变化。可以跳过一些处理
+  const didBailout = completedWork.alternate !== null && completedWork.alternate.child === completedWork.child;
+  //  while循环遍历child的flags、subtreeFlags、并累加到当前的subtreeFlags
+  //  didBailout代表跳过。需要跳过的只记录&StaticMask静态标识
+
 
   let newChildLanes: Lanes = NoLanes;
   let subtreeFlags = NoFlags;
@@ -757,17 +753,8 @@ function bubbleProperties(completedWork: Fiber) {
         subtreeFlags |= child.subtreeFlags;
         subtreeFlags |= child.flags;
 
-        // When a fiber is cloned, its actualDuration is reset to 0. This value will
-        // only be updated if work is done on the fiber (i.e. it doesn't bailout).
-        // When work is done, it should bubble to the parent's actualDuration. If
-        // the fiber has not been cloned though, (meaning no work was done), then
-        // this value will reflect the amount of time spent working on a previous
-        // render. In that case it should not bubble. We determine whether it was
-        // cloned by comparing the child pointer.
-        // $FlowFixMe[unsafe-addition] addition with possible null/undefined value
         actualDuration += child.actualDuration;
 
-        // $FlowFixMe[unsafe-addition] addition with possible null/undefined value
         treeBaseDuration += child.treeBaseDuration;
         child = child.sibling;
       }
@@ -782,7 +769,7 @@ function bubbleProperties(completedWork: Fiber) {
           mergeLanes(child.lanes, child.childLanes),
         );
 
-        subtreeFlags |= child.subtreeFlags;
+        subtreeFlags |= child.subtreeFlags;// 收集子组件的subtreeFlags
         subtreeFlags |= child.flags;
 
         // Update the return pointer so the tree is consistent. This is a code
@@ -857,22 +844,29 @@ function bubbleProperties(completedWork: Fiber) {
 function completeDehydratedSuspenseBoundary(
   current: Fiber | null,
   workInProgress: Fiber,
-  nextState: SuspenseState | null,
+  nextState: SuspenseState | null,//  suspense组件上的memorizedState
 ): boolean {
+  // 进行水合状态的处理，并判断是否成功处理水合。返回true标识已成功处理
   const wasHydrated = popHydrationState(workInProgress);
 
   if (nextState !== null && nextState.dehydrated !== null) {
-    // We might be inside a hydration state the first time we're picking up this
-    // Suspense boundary, and also after we've reentered it for further hydration.
+    //  表示仍然存在脱水的情况
+    // 处理两种情况：首次渲染这个Suspense或更新已存在的Suspense
+    
+    // 情况1: 首次渲染的Suspense边界
     if (current === null) {
-      if (!wasHydrated) {
+      if (!wasHydrated) { // 验证：首次渲染的脱水组件必须存在对应DOM节点
         throw new Error(
           'A dehydrated suspense component was completed without a hydrated node. ' +
             'This is probably a bug in React.',
         );
       }
+      // 准备水合Suspense实例，关联DOM与fiber
       prepareToHydrateHostSuspenseInstance(workInProgress);
+      //  冒泡子组件的标识
       bubbleProperties(workInProgress);
+
+      //  性能分析
       if (enableProfilerTimer) {
         if ((workInProgress.mode & ProfileMode) !== NoMode) {
           const isTimedOutSuspense = nextState !== null;
@@ -887,22 +881,28 @@ function completeDehydratedSuspenseBoundary(
           }
         }
       }
+      // 返回false表示水合已完成，不需要继续执行普通Suspense逻辑
       return false;
-    } else {
+    } else {// 情况2: 更新已存在的Suspense边界
+      
+      // 判断警告，如果有会console.error
       emitPendingHydrationWarnings();
-      // We might have reentered this boundary to hydrate it. If so, we need to reset the hydration
-      // state since we're now exiting out of it. popHydrationState doesn't do that for us.
+
+      // 重置水合状态，准备下一个水合阶段
+      // 因为我们现在退出这个Suspense边界的处理
       resetHydrationState();
+
+      // 如果Suspense没有捕获到挂起内容，清除其状态
       if ((workInProgress.flags & DidCapture) === NoFlags) {
-        // This boundary did not suspend so it's now hydrated and unsuspended.
         workInProgress.memoizedState = null;
       }
-      // If nothing suspended, we need to schedule an effect to mark this boundary
-      // as having hydrated so events know that they're free to be invoked.
-      // It's also a signal to replay events and the suspense callback.
-      // If something suspended, schedule an effect to attach retry listeners.
-      // So we might as well always mark this.
+      // 标记需要在提交阶段处理的更新
+      // 这确保:
+      // 1. 标记这个边界已完成水合，事件可以被正常处理
+      // 2. 支持事件重播和Suspense回调
+      // 3. 为挂起内容设置重试监听器  
       workInProgress.flags |= Update;
+      //  冒泡
       bubbleProperties(workInProgress);
       if (enableProfilerTimer) {
         if ((workInProgress.mode & ProfileMode) !== NoMode) {
@@ -921,13 +921,16 @@ function completeDehydratedSuspenseBoundary(
       return false;
     }
   } else {
-    // Successfully completed this tree. If this was a forced client render,
-    // there may have been recoverable errors during first hydration
-    // attempt. If so, add them to a queue so we can log them in the
-    // commit phase.
+    //  1、完全水合成功的suspense
+    //  2、强制客户端渲染的情况。水合错误，打上ForceClientRender且dehydrated被清空
+    //  3、初始化客户端渲染的suspense
+    //  4.水合成功，但是又挂起了
+    //  
+    // 将可能在首次水合尝试时收集的错误升级为可恢复错误
+    // 这些将在提交阶段被记录
     upgradeHydrationErrorsToRecoverable();
 
-    // Fall through to normal Suspense path
+      // 返回true表示应该继续执行普通的Suspense逻辑
     return true;
   }
 }
@@ -938,10 +941,8 @@ function completeWork(
   renderLanes: Lanes,
 ): Fiber | null {
   const newProps = workInProgress.pendingProps;
-  // Note: This intentionally doesn't check if we're hydrating because comparing
-  // to the current tree provider fiber is just as fast and less error-prone.
-  // Ideally we would have a special version of the work loop only
-  // for hydration.
+  //  此时不进行hydration校验。直接进行fiber比较更高效、且不容易出错
+  //  如：更新节点不需要比较。因为已经创建了
   popTreeContext(workInProgress);
   switch (workInProgress.tag) {
     case IncompleteFunctionComponent: {
@@ -959,6 +960,7 @@ function completeWork(
     case Profiler:
     case ContextConsumer:
     case MemoComponent:
+      //  将子组件属性冒泡到父组件。记录子组件的subTreeFlags、flags到当前组件的subTreeFlags
       bubbleProperties(workInProgress);
       return null;
     case ClassComponent: {
@@ -971,17 +973,14 @@ function completeWork(
     }
     case HostRoot: {
       const fiberRoot = (workInProgress.stateNode: FiberRoot);
-
+      //  transition 处理。打上Passive的flag
       if (enableTransitionTracing) {
         const transitions = getWorkInProgressTransitions();
-        // We set the Passive flag here because if there are new transitions,
-        // we will need to schedule callbacks and process the transitions,
-        // which we do in the passive phase
         if (transitions !== null) {
           workInProgress.flags |= Passive;
         }
       }
-
+      // 缓存处理
       if (enableCache) {
         let previousCache: Cache | null = null;
         if (current !== null) {
@@ -1211,9 +1210,14 @@ function completeWork(
       // Fall through
     }
     case HostComponent: {
+    // 从栈中弹出当前的 host 上下文，完成当前组件的上下文处理
+    // 这是因为在 beginWork 阶段我们可能推入了新的上下文
       popHostContext(workInProgress);
       const type = workInProgress.type;
+
+      //  DOM树中已存在内容，且存在对应节点
       if (current !== null && workInProgress.stateNode != null) {
+        //  标记节点更新
         updateHostComponent(
           current,
           workInProgress,
@@ -1222,6 +1226,7 @@ function completeWork(
           renderLanes,
         );
       } else {
+        // 挂载阶段：创建新的 DOM 节点。
         if (!newProps) {
           if (workInProgress.stateNode === null) {
             throw new Error(
@@ -1229,24 +1234,23 @@ function completeWork(
                 'caused by a bug in React. Please file an issue.',
             );
           }
-
-          // This can happen when we abort work.
+          // 这种情况可能发生在我们中止工作时
+          // 处理 fiber 的属性冒泡
           bubbleProperties(workInProgress);
           return null;
         }
-
+        //  获取内容的上下文，用于创建
         const currentHostContext = getHostContext();
-        // TODO: Move createInstance to beginWork and keep it on a context
-        // "stack" as the parent. Then append children as we go in beginWork
-        // or completeWork depending on whether we want to add them top->down or
-        // bottom->up. Top->down is faster in IE11.
+   
+        // 检查当前 fiber 是否是通过服务端渲染的水合(hydration)过程
         const wasHydrated = popHydrationState(workInProgress);
         if (wasHydrated) {
-          // TODO: Move this and createInstance step into the beginPhase
-          // to consolidate.
+          //  开始水合。beginWork也有
           prepareToHydrateHostInstance(workInProgress, currentHostContext);
         } else {
+          // 获取根容器实例，通常是整个应用的根 DOM 节点
           const rootContainerInstance = getRootHostContainer();
+          // 创建 DOM 实例
           const instance = createInstance(
             type,
             newProps,
@@ -1254,33 +1258,38 @@ function completeWork(
             currentHostContext,
             workInProgress,
           );
-          // TODO: For persistent renderers, we should pass children as part
-          // of the initial instance creation
+          // 标记该 fiber 为已克隆，用于优化
           markCloned(workInProgress);
+
+          // 这里采用的是自下而上的方式，因为在 completeWork 阶段，子节点已经完成了处理
+          //  将节点的子节点DOM挂载到当前Fiber的stateNode中
           appendAllChildren(instance, workInProgress, false, false);
+          // 将创建的 DOM 实例保存到 fiber 的 stateNode 属性上
           workInProgress.stateNode = instance;
 
-          // Certain renderers require commit-time effects for initial mount.
-          // (eg DOM renderer supports auto-focus for certain elements).
-          // Make sure such renderers get scheduled for later work.
+      
+          // 某些渲染器需要在初始挂载时执行提交时效果
+          // (例如 DOM 渲染器支持某些元素的自动聚焦)
+          // 确保这些渲染器被安排进行后续工作
+          //  判断符合的元素+需要操作的属性标识。同时满足，就打flags
           if (
             finalizeInitialChildren(
               instance,
               type,
               newProps,
               currentHostContext,
-            )
+            )// 会设置相应属性
           ) {
+            //  标记在提交阶段需要update
             markUpdate(workInProgress);
           }
         }
       }
+      //  冒泡属性
       bubbleProperties(workInProgress);
 
-      // This must come at the very end of the complete phase, because it might
-      // throw to suspend, and if the resource immediately loads, the work loop
-      // will resume rendering as if the work-in-progress completed. So it must
-      // fully complete.
+      //  最后处理。有可能会抛出异常，需要暂停处理。
+      //  大概率都是不需要的。为了预留接口
       preloadInstanceAndSuspendIfNeeded(
         workInProgress,
         workInProgress.type,
@@ -1292,11 +1301,13 @@ function completeWork(
     case HostText: {
       const newText = newProps;
       if (current && workInProgress.stateNode != null) {
+        //  更新已有节点
         const oldText = current.memoizedProps;
         // If we have an alternate, that means this is an update and we need
         // to schedule a side-effect to do the updates.
         updateHostText(current, workInProgress, oldText, newText);
       } else {
+        //  创建新节点
         if (typeof newText !== 'string') {
           if (workInProgress.stateNode === null) {
             throw new Error(
@@ -1306,13 +1317,23 @@ function completeWork(
           }
           // This can happen when we abort work.
         }
+        //  根容器实例
         const rootContainerInstance = getRootHostContainer();
+        //  获取当前的渲染上下文，包括命名空间
         const currentHostContext = getHostContext();
+
+        //  判断当前场景是否可以水合。nextHydratableInstance已经存在说明有问题，会throw error走错误机制，重新调度。客户端渲染
+        // 内部会定义nextHydratableInstance。下一个水合元素
         const wasHydrated = popHydrationState(workInProgress);
         if (wasHydrated) {
+          // 判断水合结构是否符合预期。fiber.stateNode跟fiber.memoizedProps。一个是服务端的结果，一个是Fiber的计算结果。
+
+          //  关联Fiber跟DOM。通过internalInstanceKey
           prepareToHydrateHostTextInstance(workInProgress);
         } else {
-          markCloned(workInProgress);
+          //  客户端渲染
+          markCloned(workInProgress)//仅supportsPersistence持久化下有意义。不管如何都是clone
+          //  创建一个节点
           workInProgress.stateNode = createTextInstance(
             newText,
             rootContainerInstance,
@@ -1325,62 +1346,60 @@ function completeWork(
       return null;
     }
     case SuspenseComponent: {
+      // 获取当前Suspense组件的状态
+      // 如果nextState !== null，表示Suspense处于挂起状态，应该显示fallback
+      // 如果nextState === null，表示Suspense应该显示其子内容
       const nextState: null | SuspenseState = workInProgress.memoizedState;
-
-      // Special path for dehydrated boundaries. We may eventually move this
-      // to its own fiber type so that we can add other kinds of hydration
-      // boundaries that aren't associated with a Suspense tree. In anticipation
-      // of such a refactor, all the hydration logic is contained in
-      // this branch.
       if (
-        current === null ||
-        (current.memoizedState !== null &&
-          current.memoizedState.dehydrated !== null)
+        current === null || //  首次渲染
+        (current.memoizedState !== null &&current.memoizedState.dehydrated !== null)//  脱水情况
       ) {
+        // 尝试完成脱水Suspense边界的水合过程，包括常规的bubbleProperties
+        // 返回false表示水合处理已完成，不需要执行普通Suspense逻辑
+        // 返回true表示需要继续执行普通Suspense逻辑。包括水合已经完成了
         const fallthroughToNormalSuspensePath =
           completeDehydratedSuspenseBoundary(
             current,
             workInProgress,
             nextState,
           );
-        if (!fallthroughToNormalSuspensePath) {
+        if (!fallthroughToNormalSuspensePath) {// 此时一定是水合完成的情况
+          //  存在水合错误，标记为强制客户端渲染
           if (workInProgress.flags & ForceClientRender) {
             popSuspenseHandler(workInProgress);
-            // Special case. There were remaining unhydrated nodes. We treat
-            // this as a mismatch. Revert to client rendering.
+            // 弹出Suspense处理器上下文
+            // 返回workInProgress表示需要重新渲染此fiber，但使用客户端渲染。会到next，走下一个beginWork
             return workInProgress;
           } else {
+            // 弹出Suspense处理器上下文
             popSuspenseHandler(workInProgress);
-            // Did not finish hydrating, either because this is the initial
-            // render or because something suspended.
+            // 水合逻辑已完成，但是水合没有最终完成。可能暂停或者初始渲染。
             return null;
           }
         }
 
         // Continue with the normal Suspense path.
       }
-
+      // 弹出Suspense处理器上下文
       popSuspenseHandler(workInProgress);
 
+      // 处理已捕获挂起的情况。当前suspense捕获了一个错误。需要进行处理
+      //  在子组件beginWork的时候向上冒泡，打上flags。并继续渲染
+      //  complete阶段，到了suspense时，重修渲染
       if ((workInProgress.flags & DidCapture) !== NoFlags) {
-        // Something suspended. Re-render with the fallback children.
-        workInProgress.lanes = renderLanes;
-        // Do not reset the effect list.
-        if (
-          enableProfilerTimer &&
-          (workInProgress.mode & ProfileMode) !== NoMode
-        ) {
+       // 有内容挂起，需要使用fallback子树重新渲染
+        workInProgress.lanes = renderLanes;// 保留当前渲染车道用于重试
+        if (  enableProfilerTimer && (workInProgress.mode & ProfileMode) !== NoMode) {
           transferActualDuration(workInProgress);
         }
-        // Don't bubble properties in this case.
+        // 这种情况下不冒泡属性，直接返回fiber本身进行重新处理
         return workInProgress;
       }
-
-      const nextDidTimeout = nextState !== null;
+      // 此处超时，代表的是是否显示fallback。跟超时无关，历史命名问题
+      const nextDidTimeout = nextState !== null;// 当前是否显示fallback
       const prevDidTimeout =
         current !== null &&
-        (current.memoizedState: null | SuspenseState) !== null;
-
+        (current.memoizedState: null | SuspenseState) !== null;// 之前是否显示fallback
       if (enableCache && nextDidTimeout) {
         const offscreenFiber: Fiber = (workInProgress.child: any);
         let previousCache: Cache | null = null;
@@ -1399,46 +1418,35 @@ function completeWork(
           cache = offscreenFiber.memoizedState.cachePool.pool;
         }
         if (cache !== previousCache) {
-          // Run passive effects to retain/release the cache.
+          // 如果缓存发生变化，标记需要执行副作用来保留/释放缓存
           offscreenFiber.flags |= Passive;
         }
       }
 
-      // If the suspended state of the boundary changes, we need to schedule
-      // a passive effect, which is when we process the transitions
+     // 处理Suspense状态变化（从正常显示到fallback或从fallback到正常显示
       if (nextDidTimeout !== prevDidTimeout) {
+        // Transition追踪：在状态变化时添加Passive标记处理transitions
         if (enableTransitionTracing) {
           const offscreenFiber: Fiber = (workInProgress.child: any);
           offscreenFiber.flags |= Passive;
         }
-
-        // If the suspended state of the boundary changes, we need to schedule
-        // an effect to toggle the subtree's visibility. When we switch from
-        // fallback -> primary, the inner Offscreen fiber schedules this effect
-        // as part of its normal complete phase. But when we switch from
-        // primary -> fallback, the inner Offscreen fiber does not have a complete
-        // phase. So we need to schedule its effect here.
-        //
-        // We also use this flag to connect/disconnect the effects, but the same
-        // logic applies: when re-connecting, the Offscreen fiber's complete
-        // phase will handle scheduling the effect. It's only when the fallback
-        // is active that we have to do anything special.
+        //  只处理当前需要显示fallback。隐藏offscreen中的真实内容
+        //  如果显示真实内容。在offscreenFiber中就已经进行了切换，因为内部已经完成了
+        //  但是显示fallback，代表内部没完成
         if (nextDidTimeout) {
           const offscreenFiber: Fiber = (workInProgress.child: any);
           offscreenFiber.flags |= Visibility;
         }
       }
-
-      const retryQueue: RetryQueue | null = (workInProgress.updateQueue: any);
+    // 处理重试队列，调度重试效果（用于当挂起的数据就绪后重试渲染）
+      const retryQueue: RetryQueue | null = (workInProgress.updateQueue: any);//  获取挂起的重试队列
       scheduleRetryEffect(workInProgress, retryQueue);
-
+      // Suspense回调处理
       if (
         enableSuspenseCallback &&
         workInProgress.updateQueue !== null &&
         workInProgress.memoizedProps.suspenseCallback != null
       ) {
-        // Always notify the callback
-        // TODO: Move to passive phase
         workInProgress.flags |= Update;
       }
       bubbleProperties(workInProgress);

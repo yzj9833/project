@@ -1042,64 +1042,55 @@ export function bindInstance(
 export const supportsHydration = true;
 
 export function canHydrateInstance(
-  instance: HydratableInstance,
-  type: string,
-  props: Props,
-  inRootOrSingleton: boolean,
+  instance: HydratableInstance,// 待检查的DOM实例。nextInstance：上一个Fiber的nextInstance即当前的instance
+  type: string,// 组件的类型
+  props: Props,// 组件的属性
+  inRootOrSingleton: boolean,// 是否在React根容器中。false为普通组件树，要求严格
 ): null | Instance {
   while (instance.nodeType === ELEMENT_NODE) {
     const element: Element = (instance: any);
     const anyProps = (props: any);
     if (element.nodeName.toLowerCase() !== type.toLowerCase()) {
+      //  名称不匹配
       if (!inRootOrSingleton) {
-        // Usually we error for mismatched tags.
+        // 普通组件中，不匹配认为错误
         if (element.nodeName === 'INPUT' && (element: any).type === 'hidden') {
-          // If we have extra hidden inputs, we don't mismatch. This allows us to embed
-          // extra form data in the original form.
+          // 特殊情况：隐藏输入框不导致不匹配错误
+          // 这允许在原始表单中嵌入额外的表单数据
         } else {
+          // 标签不匹配，无法水合
           return null;
         }
       }
-      // In root or singleton parents we skip past mismatched instances.
     } else if (!inRootOrSingleton) {
-      // Match
+      // 标签名匹配的普通组件
       if (type === 'input' && (element: any).type === 'hidden') {
-        if (__DEV__) {
-          checkAttributeStringCoercion(anyProps.name, 'name');
-        }
         const name = anyProps.name == null ? null : '' + anyProps.name;
         if (
           anyProps.type !== 'hidden' ||
           element.getAttribute('name') !== name
         ) {
-          // Skip past hidden inputs unless that's what we're looking for. This allows us
-          // embed extra form data in the original form.
+         // 这里不是真正的"跳过"，而是继续执行到函数最后返回null
+          // 这意味着对不完全匹配的隐藏input，我们不立即返回它
         } else {
+          // 找到匹配的隐藏输入框,可以水合
           return element;
         }
       } else {
         return element;
       }
     } else if (isMarkedHoistable(element)) {
-      // We've already claimed this as a hoistable which isn't hydrated this way so we skip past it.
+       // 已标记为可提升(hoistable)的元素不通过这种方式水合，有自己的水合机制，在此函数中跳过它们
     } else {
-      // We have an Element with the right type.
-
-      // We are going to try to exclude it if we can definitely identify it as a hoisted Node or if
-      // we can guess that the node is likely hoisted or was inserted by a 3rd party script or browser extension
-      // using high entropy attributes for certain types. This technique will fail for strange insertions like
-      // extension prepending <div> in the <body> but that already breaks before and that is an edge case.
+      // 我们找到了类型匹配的元素
       switch (type) {
         // case 'title':
         //We assume all titles are matchable. You should only have one in the Document, at least in a hoistable scope
         // and if you are a HostComponent with type title we must either be in an <svg> context or this title must have an `itemProp` prop.
         case 'meta': {
-          // The only way to opt out of hoisting meta tags is to give it an itemprop attribute. We assume there will be
-          // not 3rd party meta tags that are prepended, accepting the cases where this isn't true because meta tags
-          // are usually only functional for SSR so even in a rare case where we did bind to an injected tag the runtime
-          // implications are minimal
           if (!element.hasAttribute('itemprop')) {
             // This is a Hoistable
+            //  Hoistable退出匹配
             break;
           }
           return element;
@@ -1121,27 +1112,19 @@ export function canHydrateInstance(
             element.getAttribute('title') !==
               (anyProps.title == null ? null : anyProps.title)
           ) {
-            // rel + href should usually be enough to uniquely identify a link however crossOrigin can vary for rel preconnect
-            // and title could vary for rel alternate
+           // 属性不匹配，可能是不同的link元素，跳过。判断：rel、href、crossorigin、title
             break;
           }
           return element;
         }
         case 'style': {
-          // Styles are hard to match correctly. We can exclude known resources but otherwise we accept the fact that a non-hoisted style tags
-          // in <head> or <body> are likely never going to be unmounted given their position in the document and the fact they likely hold global styles
           if (element.hasAttribute('data-precedence')) {
-            // This is a style resource
+            // 特殊样式，不匹配
             break;
           }
           return element;
         }
         case 'script': {
-          // Scripts are a little tricky, we exclude known resources and then similar to links try to use high-entropy attributes
-          // to reject poor matches. One challenge with scripts are inline scripts. We don't attempt to check text content which could
-          // in theory lead to a hydration error later if a 3rd party injected an inline script before the React rendered nodes.
-          // Falling back to client rendering if this happens should be seemless though so we will try this hueristic and revisit later
-          // if we learn it is problematic
           const srcAttr = element.getAttribute('src');
           if (
             srcAttr !== (anyProps.src == null ? null : anyProps.src) ||
@@ -1150,38 +1133,34 @@ export function canHydrateInstance(
             element.getAttribute('crossorigin') !==
               (anyProps.crossOrigin == null ? null : anyProps.crossOrigin)
           ) {
-            // This script is for a different src/type/crossOrigin. It may be a script resource
-            // or it may just be a mistmatch
+            //  匹配src、type、crossorigin都相同
             if (
               srcAttr &&
               element.hasAttribute('async') &&
               !element.hasAttribute('itemprop')
             ) {
-              // This is an async script resource
+              // 这可能是异步加载的脚本资源，不应在此匹配
               break;
             }
           }
           return element;
         }
         default: {
-          // We have excluded the most likely cases of mismatch between hoistable tags, 3rd party script inserted tags,
-          // and browser extension inserted tags. While it is possible this is not the right match it is a decent hueristic
-          // that should work in the vast majority of cases.
+          // 对于其他元素类型，我们已经排除了大多数可能的误匹配情况
+          // 假定这是一个正确匹配的元素，可以水合
           return element;
         }
       }
     }
+    // 当前节点不匹配或被跳过，尝试获取下一个可水合的兄弟节点
     const nextInstance = getNextHydratableSibling(element);
     if (nextInstance === null) {
       break;
     }
     instance = nextInstance;
   }
-  // This is a suspense boundary or Text node or we got the end.
-  // Suspense Boundaries are never expected to be injected by 3rd parties. If we see one it should be matched
-  // and this is a hydration error.
-  // Text Nodes are also not expected to be injected by 3rd parties. This is less of a guarantee for <body>
-  // but it seems reasonable and conservative to reject this as a hydration error as well
+  // 如果循环结束还没有返回匹配节点，说明无法找到可水合的元素
+  // 这可能是因为遇到了文本节点、注释节点、Suspense边界或已经到达了DOM树末尾
   return null;
 }
 
@@ -1313,7 +1292,7 @@ export function isFormStateMarkerMatching(
 ): boolean {
   return markerInstance.data === FORM_STATE_IS_MATCHING;
 }
-
+  //  获取node以及它的兄弟节点。判断是否可以水合
 function getNextHydratable(node: ?Node) {
   // Skip non-hydratable nodes.
   for (; node != null; node = ((node: any): Node).nextSibling) {
@@ -1473,6 +1452,8 @@ export function hydrateSuspenseInstance(
 export function getNextHydratableInstanceAfterSuspenseInstance(
   suspenseInstance: SuspenseInstance,
 ): null | HydratableInstance {
+  //  在接收的脱水内容，遍历后续DOM节点
+  //  查询当前suspense的结束节点。然后返回它的下一个可水合的节点
   let node = suspenseInstance.nextSibling;
   // Skip past all nodes within this suspense boundary.
   // There might be nested nodes so we need to keep track of how

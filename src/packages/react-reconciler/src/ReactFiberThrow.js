@@ -554,6 +554,7 @@ function throwException(
           createCapturedValueAtFiber(wrapperError, sourceFiber),
         );
       }
+      //  从根组件重新开始渲染
       const workInProgress: Fiber = (root.current: any).alternate;
       // Schedule an update at the root to log the error but this shouldn't
       // actually happen because we should recover.
