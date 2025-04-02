@@ -235,19 +235,23 @@ export function commitHookEffectListUnmount(
   nearestMountedAncestor: Fiber | null,
 ) {
   try {
+    //  提取当前Fiber的更新队列
     const updateQueue: FunctionComponentUpdateQueue | null =
       (finishedWork.updateQueue: any);
+      //  获取最后一个effect
     const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
+    //  遍历所有effect
     if (lastEffect !== null) {
       const firstEffect = lastEffect.next;
       let effect = firstEffect;
       do {
+        //  匹配对应的flag。Passive/Layout/Insertion
         if ((effect.tag & flags) === flags) {
-          // Unmount
-          const inst = effect.inst;
-          const destroy = inst.destroy;
+          const inst = effect.inst;// 对应的回调函数
+          const destroy = inst.destroy;// 对应回调的清理函数
           if (destroy !== undefined) {
             inst.destroy = undefined;
+            //  性能分析标记开始
             if (enableSchedulingProfiler) {
               if ((flags & HookPassive) !== NoHookEffect) {
                 markComponentPassiveEffectUnmountStarted(finishedWork);
@@ -255,19 +259,10 @@ export function commitHookEffectListUnmount(
                 markComponentLayoutEffectUnmountStarted(finishedWork);
               }
             }
-
-            if (__DEV__) {
-              if ((flags & HookInsertion) !== NoHookEffect) {
-                setIsRunningInsertionEffect(true);
-              }
-            }
+            // 安全调用清理函数 实际执行safelyCallDestroy
             safelyCallDestroy(finishedWork, nearestMountedAncestor, destroy);
-            if (__DEV__) {
-              if ((flags & HookInsertion) !== NoHookEffect) {
-                setIsRunningInsertionEffect(false);
-              }
-            }
 
+            // 性能分析标记结束
             if (enableSchedulingProfiler) {
               if ((flags & HookPassive) !== NoHookEffect) {
                 markComponentPassiveEffectUnmountStopped();
@@ -297,12 +292,13 @@ export function commitHookPassiveMountEffects(
     commitHookEffectListMount(hookFlags, finishedWork);
   }
 }
-
+// 负责执行组件卸载时的副作用清理工作
 export function commitHookPassiveUnmountEffects(
   finishedWork: Fiber,
   nearestMountedAncestor: null | Fiber,
   hookFlags: HookFlags,
 ) {
+  //  性能分析情况下
   if (shouldProfile(finishedWork)) {
     startEffectTimer();
     commitHookEffectListUnmount(
@@ -312,6 +308,7 @@ export function commitHookPassiveUnmountEffects(
     );
     recordEffectDuration(finishedWork);
   } else {
+    //  执行相应的副作用的清除函数
     commitHookEffectListUnmount(
       hookFlags,
       finishedWork,

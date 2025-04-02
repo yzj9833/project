@@ -126,19 +126,14 @@ export function getClosestInstanceFromNode(targetNode: Node): null | Fiber {
         targetInst.child !== null ||
         (alternate !== null && alternate.child !== null)
       ) {
-        // Next we need to figure out if the node that skipped past is
-        // nested within a dehydrated boundary and if so, which one.
+        //  获取节点后。判断两棵树是否存在子节点
+        //  如果存在，说明可能存在未水合的情况
+
+        //  通过注释来找查找包裹的suspense组件。
         let suspenseInstance = getParentSuspenseInstance(targetNode);
         while (suspenseInstance !== null) {
-          // We found a suspense instance. That means that we haven't
-          // hydrated it yet. Even though we leave the comments in the
-          // DOM after hydrating, and there are boundaries in the DOM
-          // that could already be hydrated, we wouldn't have found them
-          // through this pass since if the target is hydrated it would
-          // have had an internalInstanceKey on it.
-          // Let's get the fiber associated with the SuspenseComponent
-          // as the deepest instance.
-          // $FlowFixMe[prop-missing]
+          // 判断这个suspense是否绑定了Fiber。因为未水合情况下，有可能还没执行完绑定流程就被点击了
+          //  此处导致了commit阶段判断blockOn，还要再校验一遍
           const targetSuspenseInst = suspenseInstance[internalInstanceKey];
           if (targetSuspenseInst) {
             return targetSuspenseInst;

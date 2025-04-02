@@ -301,11 +301,15 @@ function attemptExplicitHydrationTarget(
   // TODO: This function shares a lot of logic with findInstanceBlockingEvent.
   // Try to unify them. It's a bit tricky since it would require two return
   // values.
+  //  查找对应的Fiber
   const targetInst = getClosestInstanceFromNode(queuedTarget.target);
+  //  
   if (targetInst !== null) {
+    //  获取最近的已挂载Fiber
     const nearestMounted = getNearestMountedFiber(targetInst);
     if (nearestMounted !== null) {
       const tag = nearestMounted.tag;
+      //  水合情况，要么顶是root，要么是suspense
       if (tag === SuspenseComponent) {
         const instance = getSuspenseInstanceFromFiber(nearestMounted);
         if (instance !== null) {
@@ -313,6 +317,7 @@ function attemptExplicitHydrationTarget(
           // Increase its priority.
           queuedTarget.blockedOn = instance;
           attemptHydrationAtPriority(queuedTarget.priority, () => {
+            //  给这个suspense调度一个更新。
             attemptHydrationAtCurrentPriority(nearestMounted);
           });
 
@@ -320,6 +325,7 @@ function attemptExplicitHydrationTarget(
         }
       } else if (tag === HostRoot) {
         const root: FiberRoot = nearestMounted.stateNode;
+        //  根节点无法处理
         if (isRootDehydrated(root)) {
           queuedTarget.blockedOn = getContainerFromFiber(nearestMounted);
           // We don't currently have a way to increase the priority of
@@ -494,7 +500,7 @@ function scheduleReplayQueueIfNeeded(formReplayingQueue: FormReplayingQueue) {
 }
 
 export function retryIfBlockedOn(
-  unblocked: Container | SuspenseInstance,
+  unblocked: Container | SuspenseInstance,//  刚刚水合完的DOM节点
 ): void {
   if (queuedFocus !== null) {
     scheduleCallbackIfUnblocked(queuedFocus, unblocked);
@@ -509,23 +515,25 @@ export function retryIfBlockedOn(
     scheduleCallbackIfUnblocked(queuedEvent, unblocked);
   queuedPointers.forEach(unblock);
   queuedPointerCaptures.forEach(unblock);
-
+  //  解除优先水合队列中，因为当前suspense而阻塞的事件
   for (let i = 0; i < queuedExplicitHydrationTargets.length; i++) {
     const queuedTarget = queuedExplicitHydrationTargets[i];
     if (queuedTarget.blockedOn === unblocked) {
       queuedTarget.blockedOn = null;
     }
   }
-
+  //  
   while (queuedExplicitHydrationTargets.length > 0) {
     const nextExplicitTarget = queuedExplicitHydrationTargets[0];
     if (nextExplicitTarget.blockedOn !== null) {
       // We're still blocked.
       break;
     } else {
+      //  节点已经不阻塞了。但还是要判断
       attemptExplicitHydrationTarget(nextExplicitTarget);
       if (nextExplicitTarget.blockedOn === null) {
         // We're unblocked.
+        //  移除阻塞
         queuedExplicitHydrationTargets.shift();
       }
     }

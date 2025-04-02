@@ -102,12 +102,7 @@ function extractEvents(
   eventSystemFlags: EventSystemFlags,
   targetContainer: EventTarget,
 ) {
-  // TODO: we should remove the concept of a "SimpleEventPlugin".
-  // This is the basic functionality of the event system. All
-  // the other plugins are essentially polyfills. So the plugin
-  // should probably be inlined somewhere and have its logic
-  // be core the to event system. This would potentially allow
-  // us to ship builds of React without the polyfilled plugins below.
+  //  处理最常见的事件，点击、键盘、焦点等
   SimpleEventPlugin.extractEvents(
     dispatchQueue,
     domEventName,
@@ -119,23 +114,8 @@ function extractEvents(
   );
   const shouldProcessPolyfillPlugins =
     (eventSystemFlags & SHOULD_NOT_PROCESS_POLYFILL_EVENT_PLUGINS) === 0;
-  // We don't process these events unless we are in the
-  // event's native "bubble" phase, which means that we're
-  // not in the capture phase. That's because we emulate
-  // the capture phase here still. This is a trade-off,
-  // because in an ideal world we would not emulate and use
-  // the phases properly, like we do with the SimpleEvent
-  // plugin. However, the plugins below either expect
-  // emulation (EnterLeave) or use state localized to that
-  // plugin (BeforeInput, Change, Select). The state in
-  // these modules complicates things, as you'll essentially
-  // get the case where the capture phase event might change
-  // state, only for the following bubble event to come in
-  // later and not trigger anything as the state now
-  // invalidates the heuristics of the event plugin. We
-  // could alter all these plugins to work in such ways, but
-  // that might cause other unknown side-effects that we
-  // can't foresee right now.
+  //  不是捕获阶段，且应该处理polyfill插件
+  // We don't process these events unless we are in the event's native "bubble" phase, which means that we're not in the capture phase. That's because we emulate the capture phase here still. This is a trade-off, because in an ideal world we would not emulate and use the phases properly, like we do with the SimpleEvent plugin. However, the plugins below either expect  emulation (EnterLeave) or use state localized to that plugin (BeforeInput, Change, Select). The state in these modules complicates things, as you'll essentially get the case where the capture phase event might change state, only for the following bubble event to come in later and not trigger anything as the state now invalidates the heuristics of the event plugin. We could alter all these plugins to work in such ways, but that might cause other unknown side-effects that we can't foresee right now.
   if (shouldProcessPolyfillPlugins) {
     EnterLeaveEventPlugin.extractEvents(
       dispatchQueue,
@@ -267,6 +247,7 @@ function processDispatchQueueItemsInOrder(
           currentTarget,
         );
       } else {
+        //  执行回调。比如onclick存储的事件
         executeDispatch(event, listener, currentTarget);
       }
       previousInstance = instance;
@@ -300,6 +281,7 @@ export function processDispatchQueue(
   const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0;
   for (let i = 0; i < dispatchQueue.length; i++) {
     const {event, listeners} = dispatchQueue[i];
+    //处理事件
     processDispatchQueueItemsInOrder(event, listeners, inCapturePhase);
     //  event system doesn't use pooling.
   }
@@ -314,6 +296,7 @@ function dispatchEventsForPlugins(
 ): void {
   const nativeEventTarget = getEventTarget(nativeEvent);
   const dispatchQueue: DispatchQueue = [];
+  //  创建事件。将原生DOM转为React的合成事件，并收集相关的事件监听器
   extractEvents(
     dispatchQueue,
     domEventName,
@@ -323,6 +306,7 @@ function dispatchEventsForPlugins(
     eventSystemFlags,
     targetContainer,
   );
+  //  处理收集的事件和监听器
   processDispatchQueue(dispatchQueue, eventSystemFlags);
 }
 

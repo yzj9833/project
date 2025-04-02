@@ -154,9 +154,12 @@ export function dispatchEvent(
   if (!_enabled) {
     return;
   }
-
+  debugger
+  //  null代表不需要阻塞。否则基于最远端未挂载/水合中的节点，找到suspense/root。并返回对应DOM的注释节点
+  //  会定义return_targetInst
   let blockedOn = findInstanceBlockingEvent(nativeEvent);
   if (blockedOn === null) {
+    //  正常调度
     dispatchEventForPluginEventSystem(
       domEventName,
       eventSystemFlags,
@@ -167,7 +170,8 @@ export function dispatchEvent(
     clearIfContinuousEvent(domEventName, nativeEvent);
     return;
   }
-
+  //  此时需要阻塞，blockedOn指向需要阻塞的DOM节点。root或者suspense注释节点。
+  // 不一定准，因为脱水情况，suspense也有先后。此时可能最近的suspense还没挂载Fiber
   if (
     queueIfContinuousEvent(
       blockedOn,
@@ -175,26 +179,30 @@ export function dispatchEvent(
       eventSystemFlags,
       targetContainer,
       nativeEvent,
-    )
+    )// 将连续事件排队。fousein，drag、mouse等.等水合结束后再执行，不然执行多个连续移动的事件。实际执行最后一个即可
   ) {
+    // 中止
     nativeEvent.stopPropagation();
     return;
   }
-  // We need to clear only if we didn't queue because
-  // queueing is accumulative.
+  // 清除相应的连续事件标识，
   clearIfContinuousEvent(domEventName, nativeEvent);
 
   if (
-    eventSystemFlags & IS_CAPTURE_PHASE &&
-    isDiscreteEventThatRequiresHydration(domEventName)
+    eventSystemFlags & IS_CAPTURE_PHASE &&//捕获阶段
+    isDiscreteEventThatRequiresHydration(domEventName)// 需要水合的离散事件
   ) {
     while (blockedOn !== null) {
+      //  获取对应的Fiber
       const fiber = getInstanceFromNode(blockedOn);
       if (fiber !== null) {
+        //  同步水合
         attemptSynchronousHydration(fiber);
       }
+      //  再次查找是否有阻塞的。并循环
       const nextBlockedOn = findInstanceBlockingEvent(nativeEvent);
       if (nextBlockedOn === null) {
+        //  分发事件
         dispatchEventForPluginEventSystem(
           domEventName,
           eventSystemFlags,
@@ -239,31 +247,24 @@ export let return_targetInst: null | Fiber = null;
 export function findInstanceBlockingTarget(
   targetNode: Node,
 ): null | Container | SuspenseInstance {
-  // TODO: Warn if _enabled is false.
-
   return_targetInst = null;
-
+  // 获取最近的Fiber节点。如果不是本身，则向上找已经绑定了的Suspense组件
   let targetInst = getClosestInstanceFromNode(targetNode);
 
   if (targetInst !== null) {
+    //  判断节点。当前已挂载则是本身。否则向上查找最远且（正在水合或待挂载）的节点的父节点 （Placement | Hydrating）.return
     const nearestMounted = getNearestMountedFiber(targetInst);
     if (nearestMounted === null) {
-      // This tree has been unmounted already. Dispatch without a target.
       targetInst = null;
     } else {
       const tag = nearestMounted.tag;
-      if (tag === SuspenseComponent) {
+      if (tag === SuspenseComponent) {// 父节点是Suspense
         const instance = getSuspenseInstanceFromFiber(nearestMounted);
-        if (instance !== null) {
-          // Queue the event to be replayed later. Abort dispatching since we
-          // don't want this event dispatched twice through the event system.
-          // TODO: If this is the first discrete event in the queue. Schedule an increased
-          // priority for this boundary.
+        if (instance !== null) { //未水合情况
+          //  instance是未水合的suspense.memoizedState.dehydrated 存储了未水合的DOM
           return instance;
         }
-        // This shouldn't happen, something went wrong but to avoid blocking
-        // the whole system, dispatch the event without a target.
-        // TODO: Warn.
+        // 大概率都是null。执行到这有问题
         targetInst = null;
       } else if (tag === HostRoot) {
         const root: FiberRoot = nearestMounted.stateNode;

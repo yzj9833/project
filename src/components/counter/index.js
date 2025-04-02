@@ -3,10 +3,11 @@ import { useState, useEffect } from "react";
 const Count = () => {
   const [count, setCount] = useState(0);
   const handleIncrement = () => {
-    setCount((e) => {
-      // console.log("setCount...", e);
-      return e + 1;
-    });
+    // setCount((e) => {
+    //   // console.log("setCount...", e);
+    //   return e + 1;
+    // });
+    setCount(1)
   };
 
   // useEffect(() => {
@@ -18,7 +19,7 @@ const Count = () => {
 
   // setCount((e) => e + 1);
 
-  return <button onClick={handleIncrement}>{count}</button>;
+  return  <button id="B" onClick={handleIncrement}>{count}</button>
 };
 
 export default Count;

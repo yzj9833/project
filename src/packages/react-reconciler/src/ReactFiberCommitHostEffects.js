@@ -220,38 +220,38 @@ function isHostParent(fiber: Fiber): boolean {
 }
 
 function getHostSibling(fiber: Fiber): ?Instance {
-  // We're going to search forward into the tree until we find a sibling host
-  // node. Unfortunately, if multiple insertions are done in a row we have to
-  // search past them. This leads to exponential search for the next sibling.
-  // TODO: Find a more efficient way to do this.
+  //  react17到19已经做了相应的优化，但这个应该持续。算法层面
+
+  //  1、向上查找，找到应该插入到哪个兄弟节点之前
   let node: Fiber = fiber;
   siblings: while (true) {
-    // If we didn't find anything, let's try the next sibling.
+    //  没有兄弟节点，向上查找父节点
     while (node.sibling === null) {
       if (node.return === null || isHostParent(node.return)) {
-        // If we pop out of the root or hit the parent the fiber we are the
-        // last sibling.
+        //  A-->B-->C
+        //  到达根节点，或者一个div、span等宿主父节点
+        //  此时当前A的直接父节点仍然是它的parent B【Fiber树中】
+        //  但是在DOM结构中，A应该放在C的容器尾部。因为B不存在
         return null;
       }
-      // $FlowFixMe[incompatible-type] found when upgrading Flow
       node = node.return;
     }
+    //  确保兄弟节点的return跟当前节点一致
     node.sibling.return = node.return;
+    //  替换node为对应的兄弟节点
     node = node.sibling;
+    //  判断兄弟节点。向下查找第一个宿主节点
     while (
       node.tag !== HostComponent &&
       node.tag !== HostText &&
       (!supportsSingletons ? true : node.tag !== HostSingleton) &&
       node.tag !== DehydratedFragment
     ) {
-      // If it is not host node and, we might have a host node inside it.
-      // Try to search down until we find one.
+      //  它们不稳定
       if (node.flags & Placement) {
-        // If we don't have a child, try the siblings instead.
-        continue siblings;
+        continue siblings;// 以这个兄弟节点作为起始，重新查
       }
-      // If we don't have a child, try the siblings instead.
-      // We also skip portals because they are not part of this host tree.
+   
       if (node.child === null || node.tag === HostPortal) {
         continue siblings;
       } else {
@@ -262,6 +262,7 @@ function getHostSibling(fiber: Fiber): ?Instance {
     // Check if this host node is stable or about to be placed.
     if (!(node.flags & Placement)) {
       // Found it!
+      // 最终找到一个稳定的，不带Placement的节点
       return node.stateNode;
     }
   }
@@ -303,28 +304,33 @@ function insertOrAppendPlacementNodeIntoContainer(
 }
 
 function insertOrAppendPlacementNode(
-  node: Fiber,
-  before: ?Instance,
-  parent: Instance,
+  node: Fiber,// 待插入的节点
+  before: ?Instance,//  找到的兄弟DOM节点
+  parent: Instance,// 找到的父级DOM节点
 ): void {
   const {tag} = node;
   const isHost = tag === HostComponent || tag === HostText;
   if (isHost) {
     const stateNode = node.stateNode;
     if (before) {
+      //  在兄弟DOM前插入
       insertBefore(parent, stateNode, before);
     } else {
+      //  插入到最后节点
       appendChild(parent, stateNode);
     }
   } else if (
     tag === HostPortal ||
     (supportsSingletons ? tag === HostSingleton : false)
   ) {
-    // If the insertion itself is a portal, then we don't want to traverse
-    // down its children. Instead, we'll get insertions from each child in
-    // the portal directly.
-    // If the insertion is a HostSingleton then it will be placed independently
+    //  Portal对应的子节点会直接处理
+    // ReactDOM.createPortal(
+    //   children,
+    //   domContainer
+    // )
+    //  HostPortal本身不是节点。对应的插入在insertOrAppendPlacementNodeIntoContainer
   } else {
+    //  当前节点不是宿主几诶单。遍历它的child，插入真实的DOM
     const child = node.child;
     if (child !== null) {
       insertOrAppendPlacementNode(child, before, parent);
@@ -350,16 +356,19 @@ function commitPlacement(finishedWork: Fiber): void {
       return;
     }
   }
-  // Recursively insert all host nodes into the parent.
+  //  1、遍历查找当前Fiber的第一个宿主parent
   const parentFiber = getHostParentFiber(finishedWork);
 
   switch (parentFiber.tag) {
     case HostSingleton: {
       if (supportsSingletons) {
+        //  祖辈节点的DOM
         const parent: Instance = parentFiber.stateNode;
+        //  兄弟DOM节点。可能为null
         const before = getHostSibling(finishedWork);
         // We only have the top Fiber that was inserted but we need to recurse down its
         // children to find all the terminal nodes.
+        //  插入
         insertOrAppendPlacementNode(finishedWork, before, parent);
         break;
       }

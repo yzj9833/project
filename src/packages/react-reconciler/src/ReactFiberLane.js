@@ -763,18 +763,21 @@ export function markRootSuspended(
   spawnedLane: Lane,
   didSkipSuspendedSiblings: boolean,
 ) {
+  //  更新挂起lanes的集合
   root.suspendedLanes |= suspendedLanes;
+  //  确保这些lanes不在pinged集合中
+  //  pingedLanes：已经接收到外部资源可以继续渲染的lanes
   root.pingedLanes &= ~suspendedLanes;
 
-  if (!didSkipSuspendedSiblings) {
-    // Mark these lanes as warm so we know there's nothing else to work on.
+  if (!didSkipSuspendedSiblings) {// 未跳过兄弟节点
+    // 标记这些新的挂起lanes已经尝试了工作路径
+    // 不需要额外的预热渲染
     root.warmLanes |= suspendedLanes;
   } else {
-    // Render unwound without attempting all the siblings. Do no mark the lanes
-    // as warm. This will cause a prewarm render to be scheduled.
+    // 影响后续的渲染策略
   }
 
-  // The suspended lanes are no longer CPU-bound. Clear their expiration times.
+  // 4. 清除挂起lanes的过期时间。它们不会应该超时而被强制处理。饥饿问题中不会处理到它们
   const expirationTimes = root.expirationTimes;
   let lanes = suspendedLanes;
   while (lanes > 0) {
@@ -785,8 +788,10 @@ export function markRootSuspended(
 
     lanes &= ~lane;
   }
-
+// 5. 处理spawned lane。比如：workInProgressDeferredLane
   if (spawnedLane !== NoLane) {
+    //  将spawnedLane添加到pendingLanes
+    //  并从suspendedLanes移除，加入到pingedLanes中
     markSpawnedDeferredLane(root, spawnedLane, suspendedLanes);
   }
 }
@@ -806,9 +811,11 @@ export function markRootFinished(
   updatedLanes: Lanes,
   suspendedRetryLanes: Lanes,
 ) {
+  //存于root的待处理lanes
   const previouslyPendingLanes = root.pendingLanes;
-  const noLongerPendingLanes = previouslyPendingLanes & ~remainingLanes;
-
+  // 剔除了本次渲染的任务。保留未执行的任务
+  const noLongerPendingLanes = previouslyPendingLanes & ~remainingLanes;// 
+  //  
   root.pendingLanes = remainingLanes;
 
   // Let's try everything again
