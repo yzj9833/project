@@ -1,0 +1,741 @@
+# React Fizz 服务端渲染引擎详解
+
+React 18 引入了全新的服务端渲染架构——React Fizz。这是一次服务端渲染能力的重大革新，完全替代了之前的 Stack 渲染器。本文将深入解析 React Fizz 的设计思想、核心架构和工作原理，帮助你全面理解 React 现代服务端渲染的内部机制。
+
+## 一、React Fizz 概述
+
+### 1.1 什么是 React Fizz
+
+React Fizz 是 React 18 中引入的服务端渲染新架构，它采用流式渲染方式，支持 Suspense、并发模式和选择性水合等现代特性。与旧版渲染器相比，Fizz 能够以更高效的方式生成 HTML，并提供更好的用户体验。
+
+### 1.2 核心特性
+
+- **流式渲染**：逐步生成和传输 HTML，而不是等待整个页面渲染完成
+- **Suspense 支持**：原生支持服务端 Suspense 组件
+- **选择性水合**：允许页面不同部分独立水合，优先处理用户交互区域
+- **错误边界处理**：优雅处理服务端渲染中的错误
+- **递增式生成**：将渲染任务分解为小块，逐步完成
+
+## 二、架构设计
+
+### 2.1 核心数据结构
+
+#### Request（请求对象）
+
+Request 是 Fizz 中最核心的对象，它管理整个渲染过程的状态：
+
+```javascript
+export type Request = {
+  destination: null | Destination,    // 输出目标
+  flushScheduled: boolean,            // 是否安排了刷新
+  resumableState: ResumableState,     // 可恢复状态（用于水合）
+  renderState: RenderState,           // 渲染状态
+  rootFormatContext: FormatContext,   // 根格式化上下文
+  progressiveChunkSize: number,       // 渐进式块大小
+  status: 10 | 11 | 12 | 13 | 14,     // 请求状态
+  allPendingTasks: number,            // 所有待处理任务计数
+  pendingRootTasks: number,           // 待处理的根任务计数
+  completedRootSegment: null | Segment, // 已完成的根段
+  abortableTasks: Set<Task>,          // 可中止任务集合
+  pingedTasks: Array<Task>,           // 待执行的高优先级任务
+  // 边界管理
+  clientRenderedBoundaries: Array<SuspenseBoundary>,
+  completedBoundaries: Array<SuspenseBoundary>,
+  partialBoundaries: Array<SuspenseBoundary>,
+  // 回调函数
+  onError: (error: mixed, errorInfo: ErrorInfo) => ?string,
+  onAllReady: () => void,
+  onShellReady: () => void,
+  onShellError: (error: mixed) => void,
+  onFatalError: (error: mixed) => void,
+};
+```
+
+#### Task（任务）
+
+Task 表示需要执行的渲染工作单元：
+
+```javascript
+export type Task = {
+  node: ReactNodeList,                 // 待渲染的节点
+  ping: () => void,                    // 通知任务可继续执行的函数
+  blockedBoundary: null | SuspenseBoundary, // 阻塞该任务的边界
+  blockedSegment: null | Segment,      // 任务写入的段
+  abortSet: Set<Task>,                 // 任务所在的中止集合
+  keyPath: KeyNode,                    // 键路径，用于识别组件位置
+  formatContext: FormatContext,        // 格式化上下文
+  componentStack: null | ComponentStackNode, // 组件栈
+};
+```
+
+#### Segment（段）
+
+Segment 是 HTML 输出的基本单位：
+
+```javascript
+type Segment = {
+  status: 0 | 1 | 2 | 3 | 4 | 5,      // 段状态
+  id: number,                          // 段ID
+  parentFlushed: boolean,              // 父段是否已刷新
+  chunks: Array<Chunk>,                // HTML块
+  children: Array<Segment>,            // 子段
+  boundary: null | SuspenseBoundary,   // 关联的边界
+};
+```
+
+#### SuspenseBoundary（悬停边界）
+
+管理 Suspense 组件的状态：
+
+```javascript
+type SuspenseBoundary = {
+  status: 0 | 1 | 4,                  // 边界状态
+  pendingTasks: number,               // 待处理任务数
+  completedSegments: Array<Segment>,  // 已完成段
+  fallbackAbortableTasks: Set<Task>,  // 回退任务集合
+  errorDigest: ?string,               // 错误摘要
+};
+```
+
+### 2.2 状态管理
+
+Fizz 使用状态常量管理不同阶段：
+
+#### 段状态
+- `PENDING = 0`：待处理
+- `COMPLETED = 1`：已完成
+- `FLUSHED = 2`：已刷新
+- `ABORTED = 3`：已中止
+- `ERRORED = 4`：已出错
+
+#### 请求状态
+- `OPENING = 10`：正在打开
+- `OPEN = 11`：已打开
+- `ABORTING = 12`：正在中止
+- `CLOSING = 13`：正在关闭
+- `CLOSED = 14`：已关闭
+
+#### 边界状态
+- `PENDING = 0`：待处理
+- `COMPLETED = 1`：已完成
+- `CLIENT_RENDERED = 4`：客户端渲染
+
+## 三、渲染流程
+
+### 3.1 创建请求
+
+渲染从 `createRequest` 函数开始：
+
+```javascript
+export function createRequest(
+  children: ReactNodeList,             // React元素树
+  resumableState: ResumableState,      // 可恢复状态
+  renderState: RenderState,            // 渲染状态
+  rootFormatContext: FormatContext,    // 根格式化上下文
+  progressiveChunkSize: void | number, // 渐进式块大小
+  onError: void | ((error: mixed) => ?string),
+  onAllReady: void | (() => void),
+  onShellReady: void | (() => void),
+  onShellError: void | ((error: mixed) => void),
+  onFatalError: void | ((error: mixed) => void),
+): Request {
+  // 1. 创建请求对象
+  const request = new RequestInstance(...);
+  
+  // 2. 创建根段
+  const rootSegment = createPendingSegment(
+    request, 0, null, rootFormatContext, false, false
+  );
+  rootSegment.parentFlushed = true;
+  
+  // 3. 创建并添加根任务
+  const rootTask = createRenderTask(
+    request, children, -1, null, rootSegment,
+    request.abortableTasks, rootFormatContext
+  );
+  request.pingedTasks.push(rootTask);
+  
+  return request;
+}
+```
+
+### 3.2 任务执行
+
+通过 `performWork` 函数执行渲染任务：
+
+```javascript
+function performWork(request: Request): void {
+  // 如果请求已关闭，直接返回
+  if (request.status === CLOSED) {
+    return;
+  }
+  
+  // 设置当前请求上下文
+  const prevRequest = currentRequest;
+  currentRequest = request;
+  
+  try {
+    // 处理所有被ping的任务
+    const pingedTasks = request.pingedTasks;
+    let i;
+    for (i = 0; i < pingedTasks.length; i++) {
+      const task = pingedTasks[i];
+      retryTask(request, task);
+    }
+    pingedTasks.splice(0, i);
+    
+    // 如果没有更多任务且目标存在，可能需要刷新
+    if (
+      request.destination !== null &&
+      request.status === OPEN &&
+      request.pingedTasks.length === 0
+    ) {
+      flushCompletedQueues(request, request.destination);
+    }
+  } finally {
+    currentRequest = prevRequest;
+  }
+}
+```
+
+### 3.3 渲染组件
+
+根据组件类型执行不同的渲染逻辑：
+
+```javascript
+function renderElement(
+  request: Request,
+  task: Task,
+  type: any,
+  props: Object,
+): void {
+  // 函数组件或类组件
+  if (typeof type === 'function') {
+    if (shouldConstruct(type)) {
+      renderClassComponent(request, task, type, props);
+    } else {
+      renderFunctionComponent(request, task, type, props);
+    }
+    return;
+  }
+  
+  // 原生DOM元素
+  if (typeof type === 'string') {
+    renderHostElement(request, task, type, props);
+    return;
+  }
+
+  // 特殊React类型
+  switch (type) {
+    case REACT_FRAGMENT_TYPE:
+      renderFragment(request, task, props);
+      return;
+    case REACT_SUSPENSE_TYPE:
+      renderSuspenseBoundary(request, task, props);
+      return;
+    // 其他类型处理...
+  }
+  
+  // 处理高阶组件
+  if (typeof type === 'object' && type !== null) {
+    switch (type.$$typeof) {
+      case REACT_FORWARD_REF_TYPE:
+      case REACT_MEMO_TYPE:
+      // 其他高阶组件处理...
+    }
+  }
+}
+```
+
+### 3.4 处理 Suspense
+
+处理 Suspense 组件是 Fizz 的关键特性：
+
+```javascript
+function renderSuspenseBoundary(
+  request: Request,
+  task: Task,
+  props: Object,
+): void {
+  // 1. 保存当前上下文
+  const parentBoundary = task.blockedBoundary;
+  const parentSegment = task.blockedSegment;
+
+  // 2. 获取内容和回退UI
+  const content = props.children;
+  const fallback = props.fallback;
+  
+  // 3. 创建新的Suspense边界
+  const suspenseBoundary = createSuspenseBoundary(request, fallbackAbortableTasks);
+  
+  // 4. 创建边界段和内容段
+  const boundarySegment = createPendingSegment(...);
+  parentSegment.children.push(boundarySegment);
+  
+  const contentRootSegment = createPendingSegment(...);
+  contentRootSegment.parentFlushed = true;
+
+  // 5. 尝试渲染内容
+  task.blockedBoundary = suspenseBoundary;
+  task.blockedSegment = contentRootSegment;
+  
+  try {
+    renderNode(request, task, content);
+    
+    // 成功完成
+    suspenseBoundary.status = COMPLETED;
+    queueCompletedSegment(suspenseBoundary, contentRootSegment);
+    
+  } catch (error) {
+    // 处理错误或Promise挂起
+    if (typeof error.then === 'function') {
+      // 挂起：处理Promise，稍后恢复
+      const wakeable: Wakeable = (error: any);
+      const thenableState = getThenableStateAfterSuspending();
+      
+      // 添加恢复回调
+      wakeable.then(
+        () => resolveTask(request, wakeable),
+        err => rejectTask(request, wakeable, err)
+      );
+    } else {
+      // 错误：使用客户端渲染
+      suspenseBoundary.status = CLIENT_RENDERED;
+      const errorDigest = logRecoverableError(request, error);
+      request.clientRenderedBoundaries.push(suspenseBoundary);
+    }
+  } finally {
+    // 6. 恢复上下文
+    task.blockedBoundary = parentBoundary;
+    task.blockedSegment = parentSegment;
+  }
+  
+  // 7. 创建回退任务（如有必要）
+  if (suspenseBoundary.status !== COMPLETED) {
+    const fallbackTask = createRenderTask(...);
+    request.pingedTasks.push(fallbackTask);
+  }
+}
+```
+
+### 3.5 流式输出
+
+开始将 HTML 流式传输到目标：
+
+```javascript
+export function startFlowing(request: Request, destination: Destination): void {
+  // 检查请求状态
+  if (request.status === CLOSING) {
+    closeWithError(destination, request.fatalError);
+    return;
+  }
+  if (request.status === CLOSED) {
+    return;
+  }
+  
+  // 设置目标
+  request.destination = destination;
+  
+  try {
+    // 刷新队列到目标
+    flushCompletedQueues(request, destination);
+  } catch (error) {
+    // 处理错误
+    fatalError(request, error);
+  }
+}
+```
+
+## 四、关键机制
+
+### 4.1 任务管理
+
+Fizz 使用两个主要的任务集合：
+
+1. **pingedTasks**：等待执行的高优先级任务列表
+2. **abortableTasks**：可以被中止的任务集合
+
+```javascript
+function pingTask(request: Request, task: Task): void {
+  const pingedTasks = request.pingedTasks;
+  pingedTasks.push(task);
+  
+  // 如果这是第一个任务，调度工作
+  if (pingedTasks.length === 1) {
+    scheduleWork(() => performWork(request));
+  }
+}
+
+function abortTask(task: Task, request: Request, reason: mixed): void {
+  const abortableTasks = request.abortableTasks;
+  abortableTasks.delete(task);
+  
+  // 处理任务中止逻辑...
+}
+```
+
+### 4.2 边界管理
+
+Fizz 使用三种边界集合管理渲染状态：
+
+1. **clientRenderedBoundaries**：需要在客户端渲染的边界
+2. **completedBoundaries**：已完成但尚未刷新的边界
+3. **partialBoundaries**：部分完成的边界
+
+```javascript
+function queueCompletedSegment(boundary: SuspenseBoundary, segment: Segment) {
+  // 将已完成的段添加到边界中
+  boundary.completedSegments.push(segment);
+  
+  if (boundary.parentFlushed) {
+    // 如果父边界已刷新，将此边界添加到完成队列
+    request.completedBoundaries.push(boundary);
+  }
+}
+```
+
+### 4.3 错误处理
+
+提供多级错误处理机制：
+
+```javascript
+function logRecoverableError(request: Request, error: mixed): ?string {
+  // 调用用户提供的错误处理函数
+  const onError = request.onError;
+  const errorDigest = onError(error);
+  return errorDigest;
+}
+
+function fatalError(request: Request, error: mixed): void {
+  // 处理致命错误
+  const onShellError = request.onShellError;
+  const onFatalError = request.onFatalError;
+  
+  onShellError(error);
+  onFatalError(error);
+  
+  // 关闭请求
+  if (request.destination !== null) {
+    request.status = CLOSED;
+    closeWithError(request.destination, error);
+  } else {
+    request.status = CLOSING;
+    request.fatalError = error;
+  }
+}
+```
+
+### 4.4 Suspense 和挂起处理
+
+处理组件挂起和恢复：
+
+```javascript
+function handleThrow(request: Request, task: Task, x: mixed): void {
+  // 检查是否为Promise
+  if (typeof x === 'object' && x !== null && typeof x.then === 'function') {
+    // 处理Promise挂起
+    const wakeable: Wakeable = (x: any);
+    
+    // 保存当前状态
+    const thenableState = getThenableStateAfterSuspending();
+    
+    // 创建恢复任务
+    const suspendedTask = createTask(...);
+    
+    // 注册Promise回调
+    wakeable.then(
+      () => {
+        // 成功时恢复
+        suspendedTask.ping();
+      },
+      (error) => {
+        // 失败时处理错误
+        request.abortableTasks.delete(suspendedTask);
+        suspendedTask.blockedBoundary.status = CLIENT_RENDERED;
+        errorThrownInDEV = error;
+        // 错误处理...
+      }
+    );
+    
+    return;
+  }
+  
+  // 处理其他类型的错误...
+}
+```
+
+### 4.5 流式和分块输出
+
+Fizz 支持分块和流式输出策略：
+
+```javascript
+// 默认块大小约为12.5KB
+const DEFAULT_PROGRESSIVE_CHUNK_SIZE = 12800;
+
+function flushCompletedQueues(request: Request, destination: Destination): void {
+  // 开始写入
+  beginWriting(destination);
+  
+  try {
+    // 1. 处理客户端渲染的边界
+    const clientRenderedBoundaries = request.clientRenderedBoundaries;
+    for (let i = 0; i < clientRenderedBoundaries.length; i++) {
+      const boundary = clientRenderedBoundaries[i];
+      writeClientRenderBoundaryInstruction(
+        destination,
+        request.resumableState,
+        boundary
+      );
+    }
+    clientRenderedBoundaries.splice(0, i);
+    
+    // 2. 处理已完成的边界
+    const completedBoundaries = request.completedBoundaries;
+    for (let i = 0; i < completedBoundaries.length; i++) {
+      const boundary = completedBoundaries[i];
+      writeBoundaryInstructions(
+        destination,
+        request.resumableState,
+        boundary
+      );
+    }
+    completedBoundaries.splice(0, i);
+    
+    // 3. 处理部分边界
+    // ...
+    
+    // 4. 完成写入
+    completeWriting(destination);
+    
+    // 5. 刷新缓冲区
+    flushBuffered(destination);
+    
+    // 检查是否全部完成
+    if (
+      request.pendingRootTasks === 0 &&
+      request.pingedTasks.length === 0 &&
+      request.clientRenderedBoundaries.length === 0 &&
+      request.completedBoundaries.length === 0
+    ) {
+      // 完成所有工作，关闭流
+      if (request.status === OPEN) {
+        request.status = CLOSING;
+        closeWithError(destination, null);
+      }
+    }
+  } catch (error) {
+    request.status = CLOSING;
+    closeWithError(destination, error);
+  }
+}
+```
+
+## 五、实际应用
+
+### 5.1 renderToString 实现
+
+```javascript
+function renderToStringImpl(
+  children: ReactNodeList,
+  options: void | Options,
+): string {
+  // 1. 创建字符串缓冲区
+  const destination = createStringDecoder();
+  let buffer = '';
+  
+  // 2. 创建请求
+  const request = createRequest(
+    children,
+    createResumableState(),
+    createRenderState(),
+    createRootFormatContext(),
+    Infinity, // 无限时间预算
+    options?.onError,
+    () => {}, // onAllReady
+    () => {}, // onShellReady
+    () => {}, // onShellError
+    () => {}  // onFatalError
+  );
+  
+  // 3. 开始同步渲染
+  startWork(request);
+  
+  // 4. 开始流式输出到字符串
+  startFlowing(request, {
+    push(chunk) {
+      buffer += chunk;
+      return true;
+    },
+    destroy(error) {
+      // 错误处理
+    }
+  });
+  
+  return buffer;
+}
+```
+
+### 5.2 renderToPipeableStream 实现
+
+```javascript
+function renderToPipeableStream(
+  children: ReactNodeList,
+  options?: Options,
+): PipeableStream {
+  // 1. 创建请求
+  const request = createRequest(
+    children,
+    createResumableState(),
+    createRenderState(),
+    createRootFormatContext(),
+    options?.progressiveChunkSize,
+    options?.onError,
+    options?.onAllReady,
+    options?.onShellReady,
+    options?.onShellError,
+    options?.onFatalError
+  );
+  
+  // 2. 开始异步渲染
+  startWork(request);
+  
+  // 3. 返回可流式传输的对象
+  let hasStartedFlowing = false;
+  
+  return {
+    pipe<T: Writable>(destination: T): T {
+      if (hasStartedFlowing) {
+        throw new Error('React currently only supports piping to one destination.');
+      }
+      hasStartedFlowing = true;
+      startFlowing(request, destination);
+      destination.on('close', () => {
+        stopFlowing(request);
+      });
+      return destination;
+    },
+    // 其他API方法
+    abort(reason) {
+      abort(request, reason);
+    }
+  };
+}
+```
+
+### 5.3 选择性水合的实现
+
+```javascript
+function hydrateRoot(
+  container: Element | Document | DocumentFragment,
+  children: ReactNodeList,
+  options?: HydrateRootOptions,
+): Root {
+  // 使用客户端渲染器的hydrateRoot实现
+  // 这里会与服务端生成的标记进行匹配，并进行选择性水合
+}
+```
+
+## 六、性能优化
+
+### 6.1 渐进式渲染
+
+Fizz 将渲染工作分成小块处理，避免长时间阻塞：
+
+```javascript
+function performWork(request: Request): void {
+  // 限制每次处理的任务数量
+  let i;
+  for (i = 0; i < request.pingedTasks.length; i++) {
+    // 处理任务...
+    
+    // 达到块大小限制时让出控制
+    if (i >= request.progressiveChunkSize) {
+      request.pingedTasks.splice(0, i + 1);
+      // 安排下一个块的处理
+      scheduleMicrotask(() => performWork(request));
+      return;
+    }
+  }
+  // 处理完所有任务
+  request.pingedTasks.splice(0, i);
+}
+```
+
+### 6.2 早期流式传输
+
+不等待整个应用完成就开始传输 HTML：
+
+```javascript
+function completeShell(request: Request) {
+  // 流式传输页面壳层
+  if (request.trackedPostpones === null) {
+    // 发送早期预加载指令
+    safelyEmitEarlyPreloads(request, true);
+  }
+  
+  // 通知壳层已准备好
+  const onShellReady = request.onShellReady;
+  onShellReady();
+}
+```
+
+### 6.3 共享资源提升
+
+共享静态资源的处理：
+
+```javascript
+function hoistResources(
+  request: Request,
+  hoistableState: HoistableState
+): void {
+  const hoistables = hoistableState.hoistables;
+  
+  // 处理共享资源如样式、脚本等
+  for (let i = 0; i < hoistables.length; i++) {
+    const hoistable = hoistables[i];
+    // 提升资源到文档头部
+    if (!hoistable.flushed) {
+      writeHoistable(
+        request.destination,
+        request.resumableState,
+        hoistable
+      );
+      hoistable.flushed = true;
+    }
+  }
+}
+```
+
+## 七、与旧版渲染器的比较
+
+### 7.1 Stack vs. Fizz
+
+| 特性 | Stack 渲染器 | Fizz 渲染器 |
+|------|------------|------------|
+| 渲染模式 | 同步 | 支持同步和流式 |
+| Suspense 支持 | 不支持 | 原生支持 |
+| 错误处理 | 有限的错误处理 | 完整的错误边界支持 |
+| 输出方式 | 一次性生成 | 流式和分块输出 |
+| 选择性水合 | 不支持 | 支持 |
+| 性能 | 较低 | 更高 |
+
+### 7.2 迁移考虑
+
+从 Stack 迁移到 Fizz 的注意事项：
+
+1. Fizz 不支持 `renderToStaticMarkup` 中的某些特殊处理
+2. 事件处理函数会在客户端注册，而不是直接内联
+3. 需要适应流式 API 的新模式
+4. Suspense 边界将更加重要
+
+## 八、总结
+
+React Fizz 代表了 React 服务端渲染的重大进步，它采用创新的流式渲染方式，提供了多项关键特性：
+
+1. **流式传输**：逐步生成和传输 HTML，减少首字节时间
+2. **Suspense 支持**：原生支持服务端 Suspense，实现更好的加载体验
+3. **错误处理**：优雅处理服务端渲染错误，支持降级渲染
+4. **选择性水合**：允许应用不同部分独立水合，提高交互响应性
+5. **渐进式渲染**：将渲染工作分解为可管理的块，优化性能
+
+通过这些创新，Fizz 使 React 应用能够提供更快的页面加载和更流畅的用户体验，同时简化了开发者处理服务端渲染的复杂性。随着 React 18 的广泛采用，Fizz 已成为现代 React 应用服务端渲染的标准解决方案。

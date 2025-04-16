@@ -840,15 +840,6 @@ export function scheduleUpdateOnFiber(
 }
 
 export function scheduleInitialHydrationOnRoot(root: FiberRoot, lane: Lane) {
-  // This is a special fork of scheduleUpdateOnFiber that is only used to
-  // schedule the initial hydration of a root that has just been created. Most
-  // of the stuff in scheduleUpdateOnFiber can be skipped.
-  //
-  // The main reason for this separate path, though, is to distinguish the
-  // initial children from subsequent updates. In fully client-rendered roots
-  // (createRoot instead of hydrateRoot), all top-level renders are modeled as
-  // updates, but hydration roots are special because the initial render must
-  // match what was rendered on the server.
   const current = root.current;
   current.lanes = lane;
   markRootUpdated(root, lane);

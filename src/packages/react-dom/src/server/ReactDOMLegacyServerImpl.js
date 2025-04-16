@@ -33,43 +33,47 @@ function onError() {
 }
 
 function renderToStringImpl(
-  children: ReactNodeList,
+  children: ReactNodeList,//  待渲染的React节点
   options: void | ServerOptions,
-  generateStaticMarkup: boolean,
-  abortReason: string,
+  generateStaticMarkup: boolean,//  是否生成静态资源的标识。 renderToString:false, renderToStaticMarkup:true
+  abortReason: string,//  中止渲染时的错误信息
 ): string {
-  let didFatal = false;
-  let fatalError = null;
-  let result = '';
+  let didFatal = false;// 是否失败
+  let fatalError = null;// 错误error
+  let result = '';//  最终的html结果
+  //  创建一个目标对象。支持push、destroy
   const destination = {
-    // $FlowFixMe[missing-local-annot]
+    //  生成的html字段追加到result
     push(chunk) {
       if (chunk !== null) {
         result += chunk;
       }
       return true;
     },
-    // $FlowFixMe[missing-local-annot]
+    //  设置错误状态
     destroy(error) {
       didFatal = true;
       fatalError = error;
     },
   };
 
-  let readyToStream = false;
+  let readyToStream = false;//  基本框架是否准备好了。流式ssr中此时可以传输给客户端了
   function onShellReady() {
     readyToStream = true;
   }
+  //  一个可恢复状态的对象。跟踪渲染状态。
   const resumableState = createResumableState(
     options ? options.identifierPrefix : undefined,
     undefined,
   );
+  //  创建一个状态容器。追踪所有进行中的渲染任务 RequestInstance。后续所有操作都是围绕它
+  //  同时创建一个根段容器，输出内容会输出到这个根段中
   const request = createRequest(
     children,
     resumableState,
-    createRenderState(resumableState, generateStaticMarkup),
+    createRenderState(resumableState, generateStaticMarkup),//  对resumableState进行一些处理
     createRootFormatContext(),
-    Infinity,
+    Infinity,//无限时间
     onError,
     undefined,
     onShellReady,
@@ -77,10 +81,14 @@ function renderToStringImpl(
     undefined,
     undefined,
   );
+  //  启动任务
+  //  实际执行performWork进行处理
   startWork(request);
-  // If anything suspended and is still pending, we'll abort it before writing.
-  // That way we write only client-rendered boundaries from the start.
+
+  //  处理suspense的挂起。将挂起的suspense组件标记为客户端渲染。
   abort(request, abortReason);
+
+  //  开始流式传输内容。建立输出目标
   startFlowing(request, destination);
   if (didFatal && fatalError !== abortReason) {
     throw fatalError;
@@ -96,7 +104,7 @@ function renderToStringImpl(
         'updates that suspend should be wrapped with startTransition.',
     );
   }
-
+// 返回完整的html字符串
   return result;
 }
 

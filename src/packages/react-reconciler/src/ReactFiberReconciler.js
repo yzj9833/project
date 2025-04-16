@@ -297,7 +297,9 @@ export function createHydrationContainer(
   transitionCallbacks: null | TransitionTracingCallbacks,
   formState: ReactFormState<any, any> | null,
 ): OpaqueRoot {
+  //  标记水合容器
   const hydrate = true;
+  //  创建一个React根节点。根节点上hydrate为true
   const root = createFiberRoot(
     containerInfo,
     tag,
@@ -313,21 +315,18 @@ export function createHydrationContainer(
     formState,
   );
 
-  // TODO: Move this to FiberRoot constructor
+  // 设置上下文 - 这个上下文将被用于整个子树
   root.context = getContextForSubtree(null);
 
-  // Schedule the initial render. In a hydration root, this is different from
-  // a regular update because the initial render must match was was rendered
-  // on the server.
-  // NOTE: This update intentionally doesn't have a payload. We're only using
-  // the update to schedule work on the root fiber (and, for legacy roots, to
-  // enqueue the callback if one is provided).
+  // 调度初始渲染
   const current = root.current;
   const lane = requestUpdateLane(current);
   const update = createUpdate(lane);
   update.callback =
     callback !== undefined && callback !== null ? callback : null;
   enqueueUpdate(current, update, lane);
+  // 关键区别点：使用特殊的 hydration 调度函数
+  //  普通函数：scheduleUpdateOnFiber
   scheduleInitialHydrationOnRoot(root, lane);
 
   return root;

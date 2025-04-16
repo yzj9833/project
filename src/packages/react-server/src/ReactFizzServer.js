@@ -450,20 +450,21 @@ function RequestInstance(
 }
 
 export function createRequest(
-  children: ReactNodeList,
-  resumableState: ResumableState,
-  renderState: RenderState,
-  rootFormatContext: FormatContext,
-  progressiveChunkSize: void | number,
-  onError: void | ((error: mixed, errorInfo: ErrorInfo) => ?string),
-  onAllReady: void | (() => void),
-  onShellReady: void | (() => void),
-  onShellError: void | ((error: mixed) => void),
-  onFatalError: void | ((error: mixed) => void),
-  onPostpone: void | ((reason: string, postponeInfo: PostponeInfo) => void),
-  formState: void | null | ReactFormState<any, any>,
+  children: ReactNodeList,//  需要渲染的React树
+  resumableState: ResumableState,// 一个可恢复状态
+  renderState: RenderState,// 渲染状态
+  rootFormatContext: FormatContext,// 格式化上下文
+  progressiveChunkSize: void | number,// 渐进式块大小。一次渲染工作中，最大工作单元数量
+  onError: void | ((error: mixed, errorInfo: ErrorInfo) => ?string),// 错误处理回调
+  onAllReady: void | (() => void),// 所有内容完成的回调函数
+  onShellReady: void | (() => void),//  壳资源准备完毕的回调函数
+  onShellError: void | ((error: mixed) => void),//  渲染页面"壳"时发生错误的回调函数
+  onFatalError: void | ((error: mixed) => void),//  发生致命错误时的回调函数。
+  onPostpone: void | ((reason: string, postponeInfo: PostponeInfo) => void),// 渲染被推迟时的回调函数，用于React 18的选择性水合功能。
+  formState: void | null | ReactFormState<any, any>,// 表单状态，用于处理表单的渲染和数据。
 ): Request {
-  // $FlowFixMe[invalid-constructor]: the shapes are exact here but Flow doesn't like constructors
+  // 创建一个request初始化对象。包含整次渲染的一些必要参数、函数。
+  //  当前请求状态，各种回调，渲染状态、可中止的任务集合，被ping的任务队列【在下次执行】、suspense边界列表、部分完成的suspense边界列表
   const request: Request = new RequestInstance(
     resumableState,
     renderState,
@@ -478,7 +479,7 @@ export function createRequest(
     formState,
   );
 
-  // This segment represents the root fallback.
+  // 创建一个根节点片段
   const rootSegment = createPendingSegment(
     request,
     0,
@@ -488,8 +489,9 @@ export function createRequest(
     false,
     false,
   );
-  // There is no parent so conceptually, we're unblocked to flush this segment.
+  // 它是根，没有父节点，可以理解输出
   rootSegment.parentFlushed = true;
+  //  创建一个渲染整个组件的根任务。包含了要渲染的组件树children
   const rootTask = createRenderTask(
     request,
     null,
@@ -508,6 +510,7 @@ export function createRequest(
     emptyContextObject,
     null,
   );
+  //  推入任务栈、待处理任务栈
   pushComponentStack(rootTask);
   request.pingedTasks.push(rootTask);
   return request;
@@ -1124,69 +1127,63 @@ function renderSuspenseBoundary(
   const parentHoistableState = task.hoistableState;
   const parentSegment = task.blockedSegment;
 
-  // Each time we enter a suspense boundary, we split out into a new segment for
-  // the fallback so that we can later replace that segment with the content.
-  // This also lets us split out the main content even if it doesn't suspend,
-  // in case it ends up generating a large subtree of content.
-  const fallback: ReactNodeList = props.fallback;
-  const content: ReactNodeList = props.children;
 
-  const fallbackAbortSet: Set<Task> = new Set();
+  const fallback: ReactNodeList = props.fallback;// 当内容挂起时显示的回退 UI
+  const content: ReactNodeList = props.children;//  实际内容
+
+  const fallbackAbortSet: Set<Task> = new Set();//   用于收集与 fallback 相关的可中止任务的集合
+  //  一个边界对象，跟踪该组件
   const newBoundary = createSuspenseBoundary(request, fallbackAbortSet);
+
   if (request.trackedPostpones !== null) {
     newBoundary.trackedContentKeyPath = keyPath;
   }
+  // 记录当前组件在父段的位置
   const insertionIndex = parentSegment.chunks.length;
-  // The children of the boundary segment is actually the fallback.
+  //  创建一个新的段，存放suspense边界的内容
   const boundarySegment = createPendingSegment(
     request,
     insertionIndex,
     newBoundary,
     task.formatContext,
-    // boundaries never require text embedding at their edges because comment nodes bound them
     false,
     false,
   );
   parentSegment.children.push(boundarySegment);
-  // The parentSegment has a child Segment at this index so we reset the lastPushedText marker on the parent
   parentSegment.lastPushedText = false;
-
-  // This segment is the actual child content. We can start rendering that immediately.
+  //  存储实际内容的渲染内容。渲染成功会放入boundarySegment
   const contentRootSegment = createPendingSegment(
     request,
     0,
     null,
     task.formatContext,
-    // boundaries never require text embedding at their edges because comment nodes bound them
     false,
     false,
   );
-  // We mark the root segment as having its parent flushed. It's not really flushed but there is
-  // no parent segment so there's nothing to wait on.
+
   contentRootSegment.parentFlushed = true;
 
-  if (request.trackedPostpones !== null) {
-    // This is a prerender. In this mode we want to render the fallback synchronously and schedule
-    // the content to render later. This is the opposite of what we do during a normal render
-    // where we try to skip rendering the fallback if the content itself can render synchronously
+  if (request.trackedPostpones !== null) { // 预渲染
     const trackedPostpones = request.trackedPostpones;
-
+    // 创建一个fallback节点
     const fallbackKeyPath = [keyPath[0], 'Suspense Fallback', keyPath[2]];
+    //  创建一个回放节点
     const fallbackReplayNode: ReplayNode = [
       fallbackKeyPath[1],
       fallbackKeyPath[2],
       ([]: Array<ReplayNode>),
       null,
     ];
+    //  记录关系到trackedPostpones中
     trackedPostpones.workingMap.set(fallbackKeyPath, fallbackReplayNode);
-    // We are rendering the fallback before the boundary content so we keep track of
-    // the fallback replay node until we determine if the primary content suspends
+    //  记录fallback节点到维护suspense状态的newBoundary中
     newBoundary.trackedFallbackNode = fallbackReplayNode;
-
+    //  设置任务状态
     task.blockedSegment = boundarySegment;
     task.keyPath = fallbackKeyPath;
     boundarySegment.status = RENDERING;
     try {
+      //  渲染fallback
       renderNode(request, task, fallback, -1);
       pushSegmentFinale(
         boundarySegment.chunks,
@@ -1207,8 +1204,7 @@ function renderSuspenseBoundary(
       task.keyPath = prevKeyPath;
     }
 
-    // We create a suspended task for the primary content because we want to allow
-    // sibling fallbacks to be rendered first.
+    // 创建一个新的渲染实际内容的任务
     const suspendedPrimaryTask = createRenderTask(
       request,
       null,
@@ -1230,18 +1226,7 @@ function renderSuspenseBoundary(
     pushComponentStack(suspendedPrimaryTask);
     request.pingedTasks.push(suspendedPrimaryTask);
   } else {
-    // This is a normal render. We will attempt to synchronously render the boundary content
-    // If it is successful we will elide the fallback task but if it suspends or errors we schedule
-    // the fallback to render. Unlike with prerenders we attempt to deprioritize the fallback render
-
-    // Currently this is running synchronously. We could instead schedule this to pingedTasks.
-    // I suspect that there might be some efficiency benefits from not creating the suspended task
-    // and instead just using the stack if possible.
-    // TODO: Call this directly instead of messing with saving and restoring contexts.
-
-    // We can reuse the current context and task to render the content immediately without
-    // context switching. We just need to temporarily switch which boundary and which segment
-    // we're writing to. If something suspends, it'll spawn new suspended task with that context.
+    // 同步渲染
     task.blockedBoundary = newBoundary;
     task.hoistableState = newBoundary.contentState;
     task.blockedSegment = contentRootSegment;
@@ -1249,7 +1234,7 @@ function renderSuspenseBoundary(
     contentRootSegment.status = RENDERING;
 
     try {
-      // We use the safe form because we don't handle suspending here. Only error handling.
+      // 渲染实际的内容
       renderNode(request, task, content, -1);
       pushSegmentFinale(
         contentRootSegment.chunks,
@@ -1258,15 +1243,15 @@ function renderSuspenseBoundary(
         contentRootSegment.textEmbedded,
       );
       contentRootSegment.status = COMPLETED;
+      //  将已完成的内容根段添加到新边界的完成段队列中，表示这部分内容已准备好发送到客户端。
       queueCompletedSegment(newBoundary, contentRootSegment);
       if (newBoundary.pendingTasks === 0 && newBoundary.status === PENDING) {
-        // This must have been the last segment we were waiting on. This boundary is now complete.
-        // Therefore we won't need the fallback. We early return so that we don't have to create
-        // the fallback.
+        // 没有待处理任务了，设置完成。不用处理fallback
         newBoundary.status = COMPLETED;
         return;
       }
     } catch (thrownValue: mixed) {
+      //  挂起，标记客户端渲染
       newBoundary.status = CLIENT_RENDERED;
       let error: mixed;
       if (request.status === ABORTING) {
@@ -1321,10 +1306,8 @@ function renderSuspenseBoundary(
       task.blockedSegment = parentSegment;
       task.keyPath = prevKeyPath;
     }
-
+    //  创建fallback的任务
     const fallbackKeyPath = [keyPath[0], 'Suspense Fallback', keyPath[2]];
-    // We create suspended task for the fallback because we don't want to actually work
-    // on it yet in case we finish the main content, so we queue for later.
     const suspendedFallbackTask = createRenderTask(
       request,
       null,
@@ -1521,6 +1504,7 @@ function renderHostElement(
   type: string,
   props: Object,
 ): void {
+  //  获取任务
   const segment = task.blockedSegment;
   if (segment === null) {
     // Replay
@@ -1540,6 +1524,7 @@ function renderHostElement(
     task.keyPath = prevKeyPath;
   } else {
     // Render
+    //  生成html标签
     const children = pushStartInstance(
       segment.chunks,
       type,
@@ -1554,17 +1539,18 @@ function renderHostElement(
     segment.lastPushedText = false;
     const prevContext = task.formatContext;
     const prevKeyPath = task.keyPath;
+    //  创建子元素的上下文
     task.formatContext = getChildFormatContext(prevContext, type, props);
     task.keyPath = keyPath;
 
-    // We use the non-destructive form because if something suspends, we still
-    // need to pop back up and finish this subtree of HTML.
+    // 继续渲染内部内容
     renderNode(request, task, children, -1);
 
     // We expect that errors will fatal the whole task and that we don't need
     // the correct context. Therefore this is not in a finally.
     task.formatContext = prevContext;
     task.keyPath = prevKeyPath;
+    //  
     pushEndInstance(
       segment.chunks,
       type,
@@ -1588,12 +1574,12 @@ function renderWithHooks<Props, SecondArg>(
   props: Props,
   secondArg: SecondArg,
 ): any {
-  // Reset the task's thenable state before continuing, so that if a later
-  // component suspends we can reuse the same task object. If the same
-  // component suspends again, the thenable state will be restored.
+  //  处理可能存在的Promise状态
   const prevThenableState = task.thenableState;
   task.thenableState = null;
+
   const componentIdentity = {};
+  //  预制hooks相关的配置
   prepareToUseHooks(
     request,
     task,
@@ -1601,12 +1587,15 @@ function renderWithHooks<Props, SecondArg>(
     componentIdentity,
     prevThenableState,
   );
+  
   let result;
   if (__DEV__) {
     result = callComponentInDEV(Component, props, secondArg);
   } else {
+    //  执行函数组件，包括hooks。
     result = Component(props, secondArg);
   }
+  // 处理渲染阶段更新
   return finishHooks(Component, props, result, secondArg);
 }
 
@@ -1998,9 +1987,13 @@ function renderForwardRef(
     propsWithoutRef,
     ref,
   );
+  //  判断是否使用了useId的钩子
   const hasId = checkDidRenderIdHook();
+  //  获取组件中使用useActionState(或useFormState)钩子的数量
   const actionStateCount = getActionStateCount();
+  //  useActionState相关
   const actionStateMatchingIndex = getActionStateMatchingIndex();
+  //  
   finishFunctionComponent(
     request,
     task,
@@ -2135,11 +2128,12 @@ function renderOffscreen(
 function renderElement(
   request: Request,
   task: Task,
-  keyPath: KeyNode,
+  keyPath: KeyNode,// 元素在组件树的位置，用户水合
   type: any,
   props: Object,
   ref: any,
 ): void {
+  //  函数组件/类组件
   if (typeof type === 'function') {
     if (shouldConstruct(type)) {
       renderClassComponent(request, task, keyPath, type, props);
@@ -2149,11 +2143,12 @@ function renderElement(
       return;
     }
   }
+  //  原生DOM
   if (typeof type === 'string') {
     renderHostElement(request, task, keyPath, type, props);
     return;
   }
-
+  //
   switch (type) {
     // LegacyHidden acts the same as a fragment. This only works because we
     // currently assume that every instance of LegacyHidden is accompanied by a
@@ -2554,13 +2549,13 @@ function renderNodeDestructive(
   childIndex: number,
 ): void {
   if (task.replay !== null && typeof task.replay.slots === 'number') {
-    // TODO: Figure out a cheaper place than this hot path to do this check.
+    //  恢复任务
     const resumeSegmentID = task.replay.slots;
     resumeNode(request, task, resumeSegmentID, node, childIndex);
     return;
   }
-  // Stash the node we're working on. We'll pick up from this task in case
-  // something suspends.
+
+  //  暂存相应的内容，以便恢复
   task.node = node;
   task.childIndex = childIndex;
 
@@ -2577,10 +2572,10 @@ function renderNodeDestructive(
     task.debugTask = previousDebugTask;
   }
 }
-
+//  将React元素渲染成HTML
 function retryNode(request: Request, task: Task): void {
-  const node = task.node;
-  const childIndex = task.childIndex;
+  const node = task.node;// 当前要渲染的节点
+  const childIndex = task.childIndex;// 当前节点在父节点的位置
 
   if (node === null) {
     return;
@@ -2589,13 +2584,15 @@ function retryNode(request: Request, task: Task): void {
   // Handle object types
   if (typeof node === 'object') {
     switch ((node: any).$$typeof) {
+      //  处理React元素类型
       case REACT_ELEMENT_TYPE: {
         const element: any = node;
         const type = element.type;
         const key = element.key;
         const props = element.props;
-
+        //  获取ref
         let ref;
+        //  19开始，ref直接从props去
         if (enableRefAsProp) {
           // TODO: This is a temporary, intermediate step. Once the feature
           // flag is removed, we should get the ref off the props object right
@@ -2613,6 +2610,7 @@ function retryNode(request: Request, task: Task): void {
         const keyOrIndex =
           key == null ? (childIndex === -1 ? 0 : childIndex) : key;
         const keyPath = [task.keyPath, name, keyOrIndex];
+        // 基于是否重试执行replayElement/renderElement
         if (task.replay !== null) {
           if (debugTask) {
             debugTask.run(
@@ -4199,6 +4197,9 @@ function finishedTask(
 }
 
 function retryTask(request: Request, task: Task): void {
+  //  blockedSegment代表一个段
+  //  表示当前任务应该写入的HTML段
+  //  renderToString中，blockedSegment为创建的根节点段。它没有父级
   const segment = task.blockedSegment;
   if (segment === null) {
     retryReplayTask(
@@ -4217,52 +4218,52 @@ function retryTask(request: Request, task: Task): void {
 }
 
 function retryRenderTask(
-  request: Request,
-  task: RenderTask,
-  segment: Segment,
+  request: Request,// 当前的渲染请求
+  task: RenderTask,// 要执行的任务 pingedTasks中的任务集中一个
+  segment: Segment,// 对应根段模块
 ): void {
   if (segment.status !== PENDING) {
-    // We completed this by other means before we had a chance to retry it.
+    //  任务非待处理，直接不执行
     return;
   }
 
-  // We track when a Segment is rendering so we can handle aborts while rendering
+  //  设置执行的状态
   segment.status = RENDERING;
 
-  // We restore the context to what it was when we suspended.
-  // We don't restore it after we leave because it's likely that we'll end up
-  // needing a very similar context soon again.
+  //  设置对应的上下文
   switchContext(task.context);
   let prevTaskInDEV = null;
   if (__DEV__) {
     prevTaskInDEV = currentTaskInDEV;
     setCurrentTaskInDEV(task);
   }
-
   const childrenLength = segment.children.length;
   const chunkLength = segment.chunks.length;
   try {
-    // We call the destructive form that mutates this task. That way if something
-    // suspends again, we can reuse the same task instead of spawning a new one.
-
+    // 开始渲染
     retryNode(request, task);
+    //  一个组件渲染文本节点后，抛出了一个promise（suspense、use）时，lastPushedText、textEmbedded为true。会插入节点
+    //  多个文本节点之间也会插入，区分多个节点
+    //  
     pushSegmentFinale(
       segment.chunks,
       request.renderState,
-      segment.lastPushedText,
+      segment.lastPushedText,// 为true代表被中断了
       segment.textEmbedded,
     );
-
+    // 从中止集合中移除任务
     task.abortSet.delete(task);
+    // 标记段为已完成
     segment.status = COMPLETED;
+     // 处理已完成任务。管理段的状态
+     // 当完成任务后，调用completeShell/completeAll
     finishedTask(request, task.blockedBoundary, segment);
   } catch (thrownValue: mixed) {
     resetHooksState();
 
-    // Reset the write pointers to where we started.
-    segment.children.length = childrenLength;
+    // 重置指针
     segment.chunks.length = chunkLength;
-
+    //  suspense异常
     const x =
       thrownValue === SuspenseException
         ? // This is a special type of exception used for Suspense. For historical
@@ -4284,7 +4285,7 @@ function retryRenderTask(
       const trackedPostpones = request.trackedPostpones;
       const thrownInfo = getThrownInfo(task.componentStack);
       task.abortSet.delete(task);
-
+      //预渲染中止 
       if (
         enablePostpone &&
         typeof x === 'object' &&
@@ -4311,7 +4312,7 @@ function retryRenderTask(
       finishedTask(request, task.blockedBoundary, segment);
       return;
     }
-
+    //  promise。直接返回
     if (typeof x === 'object' && x !== null) {
       // $FlowFixMe[method-unbinding]
       if (typeof x.then === 'function') {
@@ -4346,11 +4347,12 @@ function retryRenderTask(
         return;
       }
     }
-
+    //  其它错误
     const errorInfo = getThrownInfo(task.componentStack);
     task.abortSet.delete(task);
 
     segment.status = ERRORED;
+    //  设置错误信息，可以降级到客户端渲染
     erroredTask(
       request,
       task.blockedBoundary,
@@ -4454,6 +4456,7 @@ function retryReplayTask(request: Request, task: ReplayTask): void {
 }
 
 export function performWork(request: Request): void {
+  //  请求关系，直接返回
   if (request.status === CLOSED || request.status === CLOSING) {
     return;
   }
@@ -4465,8 +4468,9 @@ export function performWork(request: Request): void {
     prevAsyncDispatcher = ReactSharedInternals.A;
     ReactSharedInternals.A = DefaultAsyncDispatcher;
   }
-
+  //  保存当前上下文，
   const prevRequest = currentRequest;
+  // 并设置当前上下文
   currentRequest = request;
 
   let prevGetCurrentStackImpl = null;
@@ -4477,21 +4481,27 @@ export function performWork(request: Request): void {
   const prevResumableState = currentResumableState;
   setCurrentResumableState(request.resumableState);
   try {
+    //  获取待处理的高优先级任务
     const pingedTasks = request.pingedTasks;
     let i;
     for (i = 0; i < pingedTasks.length; i++) {
       const task = pingedTasks[i];
+      //  实际的执行/重试任务
       retryTask(request, task);
     }
+    //  清空已处理的任务
     pingedTasks.splice(0, i);
+    //  存在输出目标，刷新已完成的内容
     if (request.destination !== null) {
       flushCompletedQueues(request, request.destination);
     }
   } catch (error) {
+    // 错误处理：记录可恢复错误并触发致命错误处理
     const errorInfo: ThrownInfo = {};
     logRecoverableError(request, error, errorInfo, null);
     fatalError(request, error, errorInfo, null);
   } finally {
+    // 恢复所有之前保存的上下文环境
     setCurrentResumableState(prevResumableState);
     ReactSharedInternals.H = prevDispatcher;
     if (enableCache) {
@@ -4866,17 +4876,16 @@ function flushCompletedQueues(
         // We postponed the root, so we write nothing.
         return;
       }
-
+      //  写入HTML文档开头部分
       flushPreamble(request, destination, completedRootSegment);
+      //  写入根段内容
       flushSegment(request, destination, completedRootSegment, null);
       request.completedRootSegment = null;
       writeCompletedRoot(destination, request.renderState);
     }
 
     writeHoistables(destination, request.resumableState, request.renderState);
-    // We emit client rendering instructions for already emitted boundaries first.
-    // This is so that we can signal to the client to start client rendering them as
-    // soon as possible.
+    //  获取客户端渲染边界
     const clientRenderedBoundaries = request.clientRenderedBoundaries;
     for (i = 0; i < clientRenderedBoundaries.length; i++) {
       const boundary = clientRenderedBoundaries[i];
@@ -4977,28 +4986,26 @@ function flushCompletedQueues(
 }
 
 export function startWork(request: Request): void {
+  // flushScheduled：是否存在目标输出模块。如果没有，会继续渲染，但不输出
   request.flushScheduled = request.destination !== null;
-  // When prerendering we use microtasks for pinging work
-  if (supportsRequestStorage) {
+  if (supportsRequestStorage) {// 请求存储
+    //  预渲染模式下，采用微任务调度
+    //  requestStorage.run。在上下文中红执行回调函数
     scheduleMicrotask(() => requestStorage.run(request, performWork, request));
   } else {
+    //  不支持请求存储。直接执行
     scheduleMicrotask(() => performWork(request));
   }
   scheduleWork(() => {
-    if (request.status === OPENING) {
-      request.status = OPEN;
+    //  调度一个异步任务
+    if (request.status === OPENING) {// 请求刚创建还未开始处理
+      request.status = OPEN;//  设置开始处理，可以接收、处理数据
     }
 
     if (request.trackedPostpones === null) {
-      // this is either a regular render or a resume. For regular render we want
-      // to call emitEarlyPreloads after the first performWork because we want
-      // are responding to a live request and need to balance sending something early
-      // (i.e. don't want for the shell to finish) but we need something to send.
-      // The only implementation of this is for DOM at the moment and during resumes nothing
-      // actually emits but the code paths here are the same.
-      // During a prerender we don't want to be too aggressive in emitting early preloads
-      // because we aren't responding to a live request and we can wait for the prerender to
-      // postpone before we emit anything.
+      //  当前是常规渲染或者恢复操作
+      //  期望尽早返回内容 调用emitEarlyPreloads
+      //  预渲染则不同，不想过早发送，等待预渲染完成后u发送
       if (supportsRequestStorage) {
         requestStorage.run(
           request,
@@ -5006,6 +5013,7 @@ export function startWork(request: Request): void {
           request,
         );
       } else {
+        // 初始渲染工作后，安全早起资源预加载
         enqueueEarlyPreloadsAfterInitialWork(request);
       }
     }

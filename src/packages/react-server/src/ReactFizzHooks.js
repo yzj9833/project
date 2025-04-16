@@ -183,13 +183,14 @@ function createHook(): Hook {
 }
 
 function createWorkInProgressHook(): Hook {
+  //  在finishWork中，workInProgressHook会被重置
   if (workInProgressHook === null) {
     // This is the first hook in the list
     if (firstWorkInProgressHook === null) {
       isReRender = false;
       firstWorkInProgressHook = workInProgressHook = createHook();
     } else {
-      // There's already a work-in-progress. Reuse it.
+      // finishWork渲染中更新触发。workInProgressHook为null，firstWorkInProgressHook又存在。
       isReRender = true;
       workInProgressHook = firstWorkInProgressHook;
     }
@@ -249,9 +250,7 @@ export function finishHooks(
   children: any,
   refOrContext: any,
 ): any {
-  // This must be called after every function component to prevent hooks from
-  // being used in classes.
-
+  //  渲染阶段的更新
   while (didScheduleRenderPhaseUpdate) {
     // Updates were scheduled during the render phase. They are stored in
     // the `renderPhaseUpdates` map. Call the component again, reusing the
@@ -369,29 +368,26 @@ export function useReducer<S, I, A>(
     }
   }
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
+  //  创建/返回一个workInProgressHook。维护hooks链表
   workInProgressHook = createWorkInProgressHook();
   if (isReRender) {
-    // This is a re-render. Apply the new render phase updates to the previous
-    // current hook.
+    // 更新场景
     const queue: UpdateQueue<A> = (workInProgressHook.queue: any);
     const dispatch: Dispatch<A> = (queue.dispatch: any);
     if (renderPhaseUpdates !== null) {
-      // Render phase updates are stored in a map of queue -> linked list
+      // 提取renderPhaseUpdates中的更新
       const firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
       if (firstRenderPhaseUpdate !== undefined) {
-        // $FlowFixMe[incompatible-use] found when upgrading Flow
         renderPhaseUpdates.delete(queue);
-        // $FlowFixMe[incompatible-use] found when upgrading Flow
+        //  此时还是旧值。workInProgressHook为对应hooks指针，更新内容在renderPhaseUpdates中
         let newState = workInProgressHook.memoizedState;
         let update: Update<any> = firstRenderPhaseUpdate;
         do {
-          // Process this render phase update. We don't have to check the
-          // priority because it will always be the same as the current
-          // render's.
           const action = update.action;
           if (__DEV__) {
             isInHookUserCodeInDev = true;
           }
+          // 计算新值。useState中，比如更新了值2，调用basicStateReducer(oldState,newState)
           newState = reducer(newState, action);
           if (__DEV__) {
             isInHookUserCodeInDev = false;
@@ -503,10 +499,8 @@ function dispatchAction<A>(
   }
 
   if (componentIdentity === currentlyRenderingComponent) {
-    // This is a render phase update. Stash it in a lazily-created map of
-    // queue -> linked list of updates. After this render pass, we'll restart
-    // and apply the stashed updates on top of the work-in-progress hook.
     didScheduleRenderPhaseUpdate = true;
+    //  ****创建更新到renderPhaseUpdates中****
     const update: Update<A> = {
       action,
       next: null,

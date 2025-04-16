@@ -1051,7 +1051,7 @@ export function canHydrateInstance(
     const element: Element = (instance: any);
     const anyProps = (props: any);
     if (element.nodeName.toLowerCase() !== type.toLowerCase()) {
-      //  名称不匹配
+      //  名称不匹配。在root节点或者singleton中。不会处理。尝试后续的下一个
       if (!inRootOrSingleton) {
         // 普通组件中，不匹配认为错误
         if (element.nodeName === 'INPUT' && (element: any).type === 'hidden') {
